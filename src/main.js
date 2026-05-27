@@ -46,8 +46,9 @@ function installFromApp(app) {
 					"name": app.author || "Unknown"
 				}
 			};
-			var dataUri = 'data:application/x-web-app-manifest+json,' + encodeURIComponent(JSON.stringify(miniManifest));
-			request = navigator.mozApps.installPackage(dataUri);
+			var blob = new Blob([JSON.stringify(miniManifest)], { type: 'application/x-web-app-manifest+json' });
+			var url = URL.createObjectURL(blob);
+			request = navigator.mozApps.installPackage(url);
 		}
 		
 		request.onsuccess = resolve;
