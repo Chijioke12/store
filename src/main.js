@@ -49,8 +49,19 @@ function installFromApp(app) {
 			var manifestUrl = app.manifest_url;
 			if (!manifestUrl) {
 				// Fallback to generating the URL if it's not present in registry
-				// It assumes your GitHub Pages hosts the manifest with a .webapp extension
-				manifestUrl = "https://chijioke12.github.io/Open-KaiStore-Registry/manifests/" + app.id + ".webapp";
+				manifestUrl = "https://raw.githack.com/Chijioke12/Open-KaiStore-Registry/main/manifests/" + app.id + ".webapp";
+			} else {
+				// Automatically convert github.io URLs to raw.githack.com to bypass need to enable GitHub Pages
+				if (manifestUrl.indexOf('.github.io') !== -1) {
+					var parts = manifestUrl.split('/');
+					// https://Username.github.io/Repo/manifests/id.webapp
+					if (parts.length >= 6) {
+						var username = parts[2].split('.')[0];
+						var repo = parts[3];
+						var restPath = parts.slice(4).join('/');
+						manifestUrl = "https://raw.githack.com/" + username + "/" + repo + "/main/" + restPath;
+					}
+				}
 			}
 			request = navigator.mozApps.installPackage(manifestUrl);
 		}
