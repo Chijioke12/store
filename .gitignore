@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Custom builds
+build-omnisd/
+*-omnisd.zip
+application.zip

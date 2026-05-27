@@ -41,7 +41,7 @@ $('script').each((index, element) => {
       
       // Update the script tag to link the new file
       $el.empty(); // Remove the inline content
-      $el.attr('src', `/assets/${filename}`);
+      $el.attr('src', `./assets/${filename}`);
       
       modified = true;
     }

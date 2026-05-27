@@ -4,6 +4,7 @@ import legacy from '@vitejs/plugin-legacy';
 
 export default defineConfig(() => {
   return {
+    base: './',
     plugins: [
       legacy({
         targets: ['firefox >= 48'],
