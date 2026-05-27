@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Open KaiStore</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+	<link rel="icon" type="image/svg+xml" href="icon.svg" sizes="any">
+	<link rel="stylesheet" href="/src/style.css">
+	<script>
+		(function() {
+			var unsupported = [];
+			if (typeof Promise === 'undefined') unsupported.push('Promise');
+			if (typeof fetch === 'undefined') unsupported.push('fetch');
+			if (!navigator.mozApps) unsupported.push('navigator.mozApps (KaiOS/Firefox OS App API)');
+			
+			if (unsupported.length > 0) {
+				alert("Warning: The following required features are not natively supported by your browser: \n" + unsupported.join('\n'));
+			}
+		})();
+	</script>
+</head>
+<body>
+	<header>Open KaiStore</header>
+	
+	<main id="app-content">
+		<div id="search-container">
+			<input type="text" id="search-input" placeholder="Search apps...">
+		</div>
+		<div id="loading" class="message">Loading apps...</div>
+		<div id="error" class="message hidden"></div>
+		<div id="app-list"></div>
+	</main>
+
+	<main id="view-details" class="hidden"></main>
+
+	<div id="softkey-bar">
+		<div id="softkey-left"></div>
+		<div id="softkey-center"></div>
+		<div id="softkey-right"></div>
+	</div>
+
+	<script type="module" src="/src/main.js"></script>
+</body>
+</html>
+

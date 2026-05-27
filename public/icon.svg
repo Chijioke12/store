@@ -1,0 +1,15 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4facfe" />
+      <stop offset="100%" stop-color="#00f2fe" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="115" fill="url(#bg)"/>
+  <!-- Bag handle -->
+  <path d="M 190 220 L 190 170 C 190 120 322 120 322 170 L 322 220" fill="none" stroke="#ffffff" stroke-width="36" stroke-linecap="round"/>
+  <!-- Bag body -->
+  <path d="M 120 220 L 392 220 C 410 220 420 235 415 250 L 380 410 C 375 430 360 440 340 440 L 172 440 C 152 440 137 430 132 410 L 97 250 C 92 235 102 220 120 220 Z" fill="#ffffff" stroke-linejoin="round"/>
+  <!-- OKS for Open KaiStore -->
+  <text x="256" y="355" font-family="sans-serif" font-weight="bold" font-size="90" fill="#00f2fe" text-anchor="middle">OKS</text>
+</svg>

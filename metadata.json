@@ -1,0 +1,6 @@
+{
+  "name": "KaiOS App Installer",
+  "description": "A utility for installing KaiOS apps via URL",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
