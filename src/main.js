@@ -8,21 +8,48 @@ var currentView = 'list';
 var cachedApps = [];
 var currentAppIndex = -1;
 
-function installFromUrl (url, type) {
+function installFromApp(app) {
 	return new Promise(function (resolve, reject) {
-		if (!url) {
-			reject('No URL provided');
+		if (!app) {
+			reject('No app provided');
 			return;
 		}
 		if (!navigator.mozApps) {
 			// For testing in normal browsers, fallback
-			console.log('Would install ' + type + ' app from: ' + url);
-			alert('Would install ' + type + ' app from: ' + url + '\n(mozApps API not available in this browser)');
+			var url = app.type === 'hosted' ? app.manifest_url : app.download_url;
+			console.log('Would install ' + app.type + ' app from: ' + url);
+			alert('Would install ' + app.type + ' app from: ' + url + '\n(mozApps API not available in this browser)');
 			resolve();
 			return;
 		}
 		
-		var request = navigator.mozApps[type === 'hosted' ? 'install' : 'installPackage'](url);
+		var request;
+		if (app.type === 'hosted') {
+			if (!app.manifest_url) {
+				reject('No manifest_url provided for hosted app');
+				return;
+			}
+			request = navigator.mozApps.install(app.manifest_url);
+		} else {
+			if (!app.download_url) {
+				reject('No download_url provided for packaged app');
+				return;
+			}
+			// KaiOS installPackage needs a mini-manifest served with application/x-web-app-manifest+json.
+			// GitHub does not provide this content-type.
+			// We can generate this locally with a data URI!
+			var miniManifest = {
+				"name": app.name || "App",
+				"package_path": app.download_url,
+				"version": app.version || "1.0",
+				"developer": {
+					"name": app.author || "Unknown"
+				}
+			};
+			var dataUri = 'data:application/x-web-app-manifest+json,' + encodeURIComponent(JSON.stringify(miniManifest));
+			request = navigator.mozApps.installPackage(dataUri);
+		}
+		
 		request.onsuccess = resolve;
 		request.onerror = function () {
 			reject('Installing failed: ' + this.error.name);
@@ -109,18 +136,20 @@ function initSpatialNavigation() {
 		cards[0].focus();
 	}
 	
-	cards.forEach(function(card) {
-		card.addEventListener('focus', function() {
-			if (currentView === 'list') {
-				softkeyCenter.textContent = 'VIEW';
-			}
-		});
-		card.addEventListener('blur', function() {
-			if (currentView === 'list') {
-				softkeyCenter.textContent = '';
-			}
-		});
-	});
+	for (var i = 0; i < cards.length; i++) {
+		(function(card) {
+			card.addEventListener('focus', function() {
+				if (currentView === 'list') {
+					softkeyCenter.textContent = 'VIEW';
+				}
+			});
+			card.addEventListener('blur', function() {
+				if (currentView === 'list') {
+					softkeyCenter.textContent = '';
+				}
+			});
+		})(cards[i]);
+	}
 }
 
 function showDetails(index) {
@@ -202,8 +231,7 @@ document.addEventListener('keydown', function(e) {
 		}
 		if (e.key === 'Enter') {
 			var app = cachedApps[currentAppIndex];
-			var urlToInstall = app.type === 'hosted' ? app.manifest_url : app.download_url;
-			showMessagesFor(installFromUrl(urlToInstall, app.type), 'Installed successfully!');
+			showMessagesFor(installFromApp(app), 'Installed successfully!');
 			return;
 		}
 		// If other keys, maybe we can scroll?
