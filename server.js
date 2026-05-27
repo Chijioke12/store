@@ -59,14 +59,32 @@ app.get('/api/manifest', async (req, res) => {
         const fbResponse = await fetch(fallbackUrl);
         if (fbResponse.ok) {
           const manifestText = await fbResponse.text();
-          return res.send(manifestText);
+          try {
+            const manifestJson = JSON.parse(manifestText);
+            if (manifestJson.package_path && !manifestJson.package_path.startsWith('http')) {
+              const directoryUrl = fallbackUrl.substring(0, fallbackUrl.lastIndexOf('/') + 1);
+              manifestJson.package_path = new URL(manifestJson.package_path, directoryUrl).href;
+            }
+            return res.send(JSON.stringify(manifestJson));
+          } catch (e) {
+            return res.send(manifestText);
+          }
         }
       }
       return res.status(response.status).send(`Failed to fetch manifest: ${response.statusText}`);
     }
 
     const manifestText = await response.text();
-    return res.send(manifestText);
+    try {
+      const manifestJson = JSON.parse(manifestText);
+      if (manifestJson.package_path && !manifestJson.package_path.startsWith('http')) {
+        const directoryUrl = decUrl.substring(0, decUrl.lastIndexOf('/') + 1);
+        manifestJson.package_path = new URL(manifestJson.package_path, directoryUrl).href;
+      }
+      return res.send(JSON.stringify(manifestJson));
+    } catch (e) {
+      return res.send(manifestText);
+    }
   } catch (error) {
     console.error('Error proxying manifest:', error);
     return res.status(500).send(`Server error proxying manifest: ${error.message}`);

@@ -29,9 +29,16 @@ function installFromApp(app) {
 				reject('No manifest_url provided for hosted app');
 				return;
 			}
-			// For hosted apps, install directly from the hosted domain manifest
-			console.log('Installing hosted app via:', app.manifest_url);
-			request = navigator.mozApps.install(app.manifest_url);
+			// Resolve manifest URL to use raw.githack.com to ensure correct MIME type is delivered
+			var manifestUrl = app.manifest_url;
+			if (manifestUrl.indexOf('raw.githubusercontent.com') !== -1) {
+				manifestUrl = manifestUrl.replace('raw.githubusercontent.com', 'raw.githack.com');
+			} else if (manifestUrl.indexOf('github.com') !== -1 && manifestUrl.indexOf('/raw/') !== -1) {
+				manifestUrl = manifestUrl.replace('github.com', 'raw.githack.com').replace('/raw/', '/');
+			}
+			
+			console.log('Installing hosted app via:', manifestUrl);
+			request = navigator.mozApps.install(manifestUrl);
 			
 			request.onsuccess = resolve;
 			request.onerror = function () {
@@ -43,27 +50,45 @@ function installFromApp(app) {
 				return;
 			}
 			
-			var manifestUrl = app.manifest_url;
-			if (!manifestUrl) {
-				// Fallback to the standard repo path where they host their manifests
-				manifestUrl = "https://raw.githack.com/Chijioke12/Open-KaiStore-Registry/main/manifests/" + app.id + ".webapp";
+			// Detect if we have a web server backend running on the current host.
+			// Standalone native packaged apps on a real device open with 'app://' protocol.
+			// Standalone hosted apps deployed to GitHub pages will open with '*.github.io'.
+			// Both of those are 100% static client-side environments and DO NOT have access to a backend server.
+			var hasBackend = window.location.protocol === 'http:' || window.location.protocol === 'https:';
+			if (hasBackend && window.location.hostname.indexOf('github.io') !== -1) {
+				hasBackend = false;
 			}
 			
-			// Normalize URL to raw.githack.com to guarantee correct MIME type (application/x-web-app-manifest+json)
-			var finalUrl = manifestUrl;
-			if (finalUrl.indexOf('.github.io') !== -1) {
-				var parts = finalUrl.split('/');
-				if (parts.length >= 5) {
-					var username = parts[2].split('.')[0];
-					var repo = parts[3];
-					var restPath = parts.slice(4).join('/');
-					finalUrl = "https://raw.githack.com/" + username + "/" + repo + "/main/" + restPath;
+			var finalUrl;
+			if (hasBackend) {
+				// During AI Studio development preview, dynamically construct and proxy a valid manifest
+				// point-to-point to solve MIME type issues instantly without manually writing webapp files!
+				finalUrl = window.location.origin + '/api/manifest' + 
+				               '?name=' + encodeURIComponent(app.name || 'App') + 
+				               '&package_path=' + encodeURIComponent(app.download_url) + 
+				               '&version=' + encodeURIComponent(app.version || '1.0') + 
+				               '&developer=' + encodeURIComponent(app.author || 'Unknown');
+				console.log('Installing packaged app via backend proxy manifest:', finalUrl);
+			} else {
+				// On actual KaiOS device, we MUST request a real, hosted manifest file (.webapp / .json)
+				// served with exactly Content-Type: application/x-web-app-manifest+json.
+				var staticManifestUrl = app.manifest_url;
+				if (!staticManifestUrl) {
+					// Guess a standard registry path: manifests/[app_id].webapp
+					var appId = app.id || app.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+					staticManifestUrl = "https://raw.githack.com/Chijioke12/Open-KaiStore-Registry/main/manifests/" + appId + ".webapp";
 				}
-			} else if (finalUrl.indexOf('raw.githubusercontent.com') !== -1) {
-				finalUrl = finalUrl.replace('raw.githubusercontent.com', 'raw.githack.com');
+				
+				// Rewrite GitHub raw to GitHack so raw.githack.com serves it with the correct webapp Content-Type!
+				finalUrl = staticManifestUrl;
+				if (finalUrl.indexOf('raw.githubusercontent.com') !== -1) {
+					finalUrl = finalUrl.replace('raw.githubusercontent.com', 'raw.githack.com');
+				} else if (finalUrl.indexOf('github.com') !== -1 && finalUrl.indexOf('/raw/') !== -1) {
+					finalUrl = finalUrl.replace('github.com', 'raw.githack.com').replace('/raw/', '/');
+				}
+				console.log('Installing packaged app on device via GitHack served manifest:', finalUrl);
 			}
 			
-			console.log('Installing packaged app via direct mini-manifest URL:', finalUrl);
 			request = navigator.mozApps.installPackage(finalUrl);
 			
 			request.onsuccess = resolve;
