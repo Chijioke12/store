@@ -23,6 +23,8 @@ let modified = false;
 
 $('script').each((index, element) => {
   const $el = $(element);
+  $el.removeAttr('crossorigin');
+  
   const src = $el.attr('src');
   
   if (!src) {
@@ -48,9 +50,9 @@ $('script').each((index, element) => {
   }
 });
 
-if (modified) {
-  fs.writeFileSync(htmlPath, $.html());
-  console.log('Modified index.html to remove inline scripts and link them instead.');
-} else {
-  console.log('No inline scripts found to extract.');
-}
+$('link').each((index, element) => {
+  $(element).removeAttr('crossorigin');
+});
+
+fs.writeFileSync(htmlPath, $.html());
+console.log('Modified index.html to remove inline scripts and crossorigin attributes.');
