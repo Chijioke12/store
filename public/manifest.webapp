@@ -2,12 +2,12 @@
   "name": "App Installer",
   "description": "Installer utility for KaiOS apps",
   "launch_path": "/index.html",
-  "origin": "app://oks",
+  "origin": "app://oks.io",
   "icons": {
     "128": "/icon.png",
     "512": "/icon.svg"
   },
-  "type": "privileged",
+  "type": "certified",
   "permissions": {
     "webapps-manage": {
       "description": "Required to install hosted and packaged apps."
