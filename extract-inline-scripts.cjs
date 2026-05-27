@@ -12,6 +12,11 @@ const entrySrc = entryMatch ? entryMatch[1] : '';
 const cssMatch = html.match(/href="(.*?index.*?\.css)"/);
 const cssSrc = cssMatch ? cssMatch[1] : '';
 
+// Preserve body content from original index.html
+let originalHtml = fs.readFileSync(path.resolve('index.html'), 'utf8');
+let bodyContentMatch = originalHtml.match(/<body[^>]*>([\s\S]*?)<script/i);
+let bodyContent = bodyContentMatch ? bodyContentMatch[1] : '<div id="app"></div>';
+
 // Save the system import logic to a separate file to avoid inline script CSP issues on KaiOS
 const initScriptContent = `
 (function() {
@@ -31,7 +36,7 @@ const cleanHtml = `<!doctype html>
   <link rel="stylesheet" href="${cssSrc}">
 </head>
 <body>
-  <div id="app"></div>
+  ${bodyContent.trim()}
   <script src="${polySrc}"></script>
   <script id="vite-legacy-entry" src="${entrySrc}"></script>
   <script src="./assets/init.js"></script>
