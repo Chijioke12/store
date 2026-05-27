@@ -7,18 +7,7 @@
 	<meta name="theme-color" content="#4facfe">
 	<link rel="icon" type="image/svg+xml" href="icon.svg" sizes="any">
 	<link rel="stylesheet" href="/src/style.css">
-	<script>
-		(function() {
-			var unsupported = [];
-			if (typeof Promise === 'undefined') unsupported.push('Promise');
-			if (typeof fetch === 'undefined') unsupported.push('fetch');
-			if (!navigator.mozApps) unsupported.push('navigator.mozApps (KaiOS/Firefox OS App API)');
-			
-			if (unsupported.length > 0) {
-				alert("Warning: The following required features are not natively supported by your browser: \n" + unsupported.join('\n'));
-			}
-		})();
-	</script>
+	<script src="/src/compatibility.js"></script>
 </head>
 <body>
 	<header>Open KaiStore</header>
