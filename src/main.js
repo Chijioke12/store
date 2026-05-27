@@ -29,16 +29,38 @@ function installFromApp(app) {
 				reject('No manifest_url provided for hosted app');
 				return;
 			}
+			// For hosted apps, install directly from the hosted domain manifest
+			console.log('Installing hosted app via:', app.manifest_url);
 			request = navigator.mozApps.install(app.manifest_url);
+			
+			request.onsuccess = resolve;
+			request.onerror = function () {
+				reject('Installing failed: ' + (this.error ? this.error.name : 'Unknown error'));
+			};
 		} else {
 			if (!app.download_url) {
 				reject('No download_url provided for packaged app');
 				return;
 			}
-			// KaiOS installPackage needs a mini-manifest served with application/x-web-app-manifest+json.
-			// GitHub does not provide this content-type.
-			// We can generate this locally with a data URI!
-			var miniManifest = {
+			
+			// Helper to trigger installation utilizing a client-side Data URI mini-manifest
+			// This generates an instant, valid manifest served with the exact required Content-Type.
+			var triggerInstallWithManifest = function(miniManifest) {
+				try {
+					var manifestData = JSON.stringify(miniManifest);
+					var dataUri = 'data:application/x-web-app-manifest+json;charset=utf-8,' + encodeURIComponent(manifestData);
+					console.log('Installing packaged app via Data URI mini-manifest:', miniManifest);
+					var req = navigator.mozApps.installPackage(dataUri);
+					req.onsuccess = resolve;
+					req.onerror = function() {
+						reject('Installing failed: ' + (this.error ? this.error.name : 'Unknown error'));
+					};
+				} catch (e) {
+					reject('Failed to compile installation manifest: ' + e.message);
+				}
+			};
+
+			var fallbackMiniManifest = {
 				"name": app.name || "App",
 				"package_path": app.download_url,
 				"version": app.version || "1.0",
@@ -46,30 +68,51 @@ function installFromApp(app) {
 					"name": app.author || "Unknown"
 				}
 			};
+
 			var manifestUrl = app.manifest_url;
 			if (!manifestUrl) {
-				// Fallback to generating the URL if it's not present in registry
-				manifestUrl = "https://raw.githack.com/Chijioke12/Open-KaiStore-Registry/main/manifests/" + app.id + ".webapp";
+				// No manifest URL given, so trigger the fallback dynamically on-the-fly!
+				triggerInstallWithManifest(fallbackMiniManifest);
 			} else {
-				// Automatically convert github.io URLs to raw.githack.com to bypass need to enable GitHub Pages
-				if (manifestUrl.indexOf('.github.io') !== -1) {
-					var parts = manifestUrl.split('/');
-					// https://Username.github.io/Repo/manifests/id.webapp
+				// Normalize manifest URL to fetch directly on client
+				var fetchUrl = manifestUrl;
+				if (fetchUrl.indexOf('.github.io') !== -1) {
+					var parts = fetchUrl.split('/');
 					if (parts.length >= 6) {
 						var username = parts[2].split('.')[0];
 						var repo = parts[3];
 						var restPath = parts.slice(4).join('/');
-						manifestUrl = "https://raw.githack.com/" + username + "/" + repo + "/main/" + restPath;
+						fetchUrl = "https://raw.githubusercontent.com/" + username + "/" + repo + "/main/" + restPath;
 					}
+				} else if (fetchUrl.indexOf('raw.githack.com') !== -1) {
+					fetchUrl = fetchUrl.replace('raw.githack.com', 'raw.githubusercontent.com');
 				}
+
+				console.log('Fetching packaged app manifest directly:', fetchUrl);
+				fetch(fetchUrl)
+					.then(function(res) {
+						if (!res.ok) {
+							throw new Error('HTTP Status ' + res.status);
+						}
+						return res.json();
+					})
+					.then(function(manifestJson) {
+						// Resolve relative package_path if necessary
+						if (manifestJson && manifestJson.package_path && manifestJson.package_path.indexOf('http') !== 0) {
+							var baseUrl = fetchUrl.substring(0, fetchUrl.lastIndexOf('/') + 1);
+							manifestJson.package_path = baseUrl + manifestJson.package_path;
+						} else if (!manifestJson || !manifestJson.package_path) {
+							manifestJson = manifestJson || {};
+							manifestJson.package_path = app.download_url;
+						}
+						triggerInstallWithManifest(manifestJson);
+					})
+					.catch(function(err) {
+						console.warn('Direct manifest fetch failed, utilizing registry metadata fallback:', err.message);
+						triggerInstallWithManifest(fallbackMiniManifest);
+					});
 			}
-			request = navigator.mozApps.installPackage(manifestUrl);
 		}
-		
-		request.onsuccess = resolve;
-		request.onerror = function () {
-			reject('Installing failed: ' + this.error.name);
-		};
 	});
 }
 
