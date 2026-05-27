@@ -46,9 +46,13 @@ function installFromApp(app) {
 					"name": app.author || "Unknown"
 				}
 			};
-			var blob = new Blob([JSON.stringify(miniManifest)], { type: 'application/x-web-app-manifest+json' });
-			var url = URL.createObjectURL(blob);
-			request = navigator.mozApps.installPackage(url);
+			var manifestUrl = app.manifest_url;
+			if (!manifestUrl) {
+				// Fallback to generating the URL if it's not present in registry
+				// It assumes your GitHub Pages hosts the manifest with a .webapp extension
+				manifestUrl = "https://chijioke12.github.io/Open-KaiStore-Registry/manifests/" + app.id + ".webapp";
+			}
+			request = navigator.mozApps.installPackage(manifestUrl);
 		}
 		
 		request.onsuccess = resolve;
