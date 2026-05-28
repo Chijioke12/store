@@ -8,7 +8,78 @@ var currentView = 'list';
 var cachedApps = [];
 var currentAppIndex = -1;
 
-function installFromApp(app) {
+function uninstallSilently(app) {
+	return new Promise(function(resolve) {
+		if (!navigator.mozApps || !navigator.mozApps.mgmt) {
+			resolve();
+			return;
+		}
+		
+		var request = navigator.mozApps.mgmt.getAll();
+		request.onsuccess = function() {
+			var installedApps = this.result || [];
+			var appToUninstall = null;
+			
+			for (var i = 0; i < installedApps.length; i++) {
+				var installedApp = installedApps[i];
+				var installedName = (installedApp.manifest && installedApp.manifest.name) || '';
+				var checkingName = app.name || '';
+				
+				var isMatch = false;
+				if (app.type === 'hosted') {
+					if (installedApp.manifestURL === app.manifest_url) {
+						isMatch = true;
+					}
+				} else {
+					var targetManifest = "app://" + app.id + "/manifest.webapp";
+					if (installedApp.manifestURL === targetManifest || installedApp.manifestURL === app.manifest_url) {
+						isMatch = true;
+					}
+				}
+				
+				// Fallback to matching by name (case-insensitive & trimmed) for extra robustness
+				if (!isMatch && installedName && checkingName && installedName.toLowerCase().trim() === checkingName.toLowerCase().trim()) {
+					isMatch = true;
+				}
+				
+				if (isMatch) {
+					appToUninstall = installedApp;
+					break;
+				}
+			}
+			
+			if (appToUninstall) {
+				console.log("Silently uninstalling previous version/conflicts for swapping to newer update: " + app.name);
+				var uninstReq;
+				if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.uninstall === 'function') {
+					uninstReq = navigator.mozApps.mgmt.uninstall(appToUninstall);
+				} else if (typeof appToUninstall.uninstall === 'function') {
+					uninstReq = appToUninstall.uninstall();
+				} else {
+					console.warn("Silent uninstall API not available.");
+					resolve();
+					return;
+				}
+				
+				uninstReq.onsuccess = function() {
+					console.log("Silent uninstall completed.");
+					resolve();
+				};
+				uninstReq.onerror = function() {
+					console.error("Silent uninstall failed, continuing anyway.");
+					resolve();
+				};
+			} else {
+				resolve();
+			}
+		};
+		request.onerror = function() {
+			resolve();
+		};
+	});
+}
+
+function installFromApp(app, onProgress) {
 	return new Promise(function (resolve, reject) {
 		if (!app) {
 			reject('No app provided');
@@ -38,12 +109,15 @@ function installFromApp(app) {
 			}
 			
 			console.log('Installing hosted app via:', manifestUrl);
-			request = navigator.mozApps.install(manifestUrl);
 			
-			request.onsuccess = resolve;
-			request.onerror = function () {
-				reject('Installing failed: ' + (this.error ? this.error.name : 'Unknown error'));
-			};
+			// For hosted app, trigger uninstallSilently before install to cleanly overwrite any existing registration
+			uninstallSilently(app).then(function() {
+				request = navigator.mozApps.install(manifestUrl);
+				request.onsuccess = resolve;
+				request.onerror = function () {
+					reject('Installing failed: ' + (this.error ? this.error.name : 'Unknown error'));
+				};
+			});
 		} else {
 			if (!app.download_url) {
 				reject('No download_url provided for packaged app');
@@ -53,7 +127,7 @@ function installFromApp(app) {
 			console.log('Fetching binary OmniSD blob from:', app.download_url);
 			
 			// 1. Manually fetch the raw zip package binary using systemXHR to bypass CORS restrictions
-			var downloadBlob = function(url) {
+			var downloadBlob = function(url, progressCb) {
 				return new Promise(function(resolveBlob, rejectBlob) {
 					var xhr;
 					try {
@@ -65,6 +139,16 @@ function installFromApp(app) {
 					}
 					xhr.open('GET', url, true);
 					xhr.responseType = 'blob';
+					
+					if (progressCb) {
+						xhr.onprogress = function(e) {
+							if (e.lengthComputable && e.total > 0) {
+								var percent = Math.round((e.loaded / e.total) * 100);
+								progressCb(percent);
+							}
+						};
+					}
+					
 					xhr.onload = function() {
 						if (xhr.status >= 200 && xhr.status < 300) {
 							resolveBlob(xhr.response);
@@ -79,21 +163,29 @@ function installFromApp(app) {
 				});
 			};
 
-			downloadBlob(app.download_url)
+			downloadBlob(app.download_url, onProgress)
 				.then(function(blob) {
-					// 2. Feed the raw package bundle into the native device storage manager
-					if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
-						var request = navigator.mozApps.mgmt.import(blob);
-						
-						request.onsuccess = function() {
-							resolve();
-						};
-						request.onerror = function() {
-							reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
-						};
-					} else {
-						reject('Privileged Management API missing. Is this device jailbroken?');
+					// Update progress message that we are now swapping & installing the downloaded package
+					if (onProgress) {
+						onProgress('installing');
 					}
+					
+					// 2. Perform system swapping: programmatically uninstall any existing conflicted package FIRST
+					return uninstallSilently(app).then(function() {
+						// 3. Feed the raw package bundle into the native device storage manager
+						if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
+							var request = navigator.mozApps.mgmt.import(blob);
+							
+							request.onsuccess = function() {
+								resolve();
+							};
+							request.onerror = function() {
+								reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
+							};
+						} else {
+							reject('Privileged Management API missing. Is this device jailbroken?');
+						}
+					});
 				})
 				.catch(function(err) {
 					reject('Download failed: ' + err.message);
@@ -572,12 +664,20 @@ document.addEventListener('keydown', function(e) {
 			if (currentAppState === 'INSTALL' || currentAppState === 'UPDATE') {
 				var statusIndicator = document.getElementById('details-status-indicator');
 				if (statusIndicator) {
-					statusIndicator.textContent = 'Downloading and installing...';
+					statusIndicator.textContent = 'Starting download...';
 					statusIndicator.style.color = '#3498db';
 				}
 				document.getElementById('softkey-center').textContent = 'WAIT...';
 				
-				installFromApp(app).then(function() {
+				installFromApp(app, function(percent) {
+					if (statusIndicator) {
+						if (percent === 'installing') {
+							statusIndicator.textContent = 'Swapping & Installing...';
+						} else {
+							statusIndicator.textContent = 'Downloading: ' + percent + '%';
+						}
+					}
+				}).then(function() {
 					alert('Installed successfully!');
 					refreshAppStatusMultipleTimes(app);
 				}).catch(function(err) {
