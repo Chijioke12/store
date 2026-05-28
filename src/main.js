@@ -473,6 +473,11 @@ function showDetails(index) {
 	typeBadge.textContent = app.type === 'hosted' ? 'Hosted' : 'Packaged';
 	metaContainer.appendChild(typeBadge);
 	
+	var versionBadge = document.createElement('span');
+	versionBadge.className = 'badge badge-version';
+	versionBadge.textContent = 'v' + (app.version || '1.0');
+	metaContainer.appendChild(versionBadge);
+	
 	hero.appendChild(icon);
 	hero.appendChild(title);
 	hero.appendChild(author);
@@ -651,7 +656,17 @@ function loadRegistry() {
 	var loaddiv = document.getElementById('loading');
 	var errordiv = document.getElementById('error');
 	
-	fetch(REGISTRY_URL)
+	// Append cache-buster timestamp query string to fully bypass any local/CDN HTTP caches on GitHub raw domain
+	var cacheBustedUrl = REGISTRY_URL + '?t=' + Date.now();
+	
+	var fetchPromise;
+	try {
+		fetchPromise = fetch(cacheBustedUrl, { cache: 'no-cache' });
+	} catch (e) {
+		fetchPromise = fetch(cacheBustedUrl);
+	}
+	
+	fetchPromise
 		.then(function(res) {
 			if (!res.ok) throw new Error('HTTP error ' + res.status);
 			return res.json();
