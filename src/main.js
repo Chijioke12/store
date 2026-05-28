@@ -94,6 +94,113 @@ function installFromApp(app, onProgress) {
 			return;
 		}
 		
+		var downloadBlob = function(url, progressCb) {
+			return new Promise(function(resolveBlob, rejectBlob) {
+				var xhr;
+				try {
+					// On device, create privileged systemXHR to bypass CORS
+					xhr = new XMLHttpRequest({ mozSystem: true });
+				} catch (e) {
+					// Fallback to standard request for standard browsers
+					xhr = new XMLHttpRequest();
+				}
+				xhr.open('GET', url, true);
+				xhr.responseType = 'blob';
+				
+				if (progressCb) {
+					xhr.onprogress = function(e) {
+						if (e.lengthComputable && e.total > 0) {
+							var percent = Math.round((e.loaded / e.total) * 100);
+							progressCb(percent);
+						}
+					};
+				}
+				
+				xhr.onload = function() {
+					if (xhr.status >= 200 && xhr.status < 300) {
+						resolveBlob(xhr.response);
+					} else {
+						rejectBlob(new Error('HTTP Error ' + xhr.status + ': ' + (xhr.statusText || 'Unknown')));
+					}
+				};
+				xhr.onerror = function() {
+					rejectBlob(new Error('Network request failed'));
+				};
+				xhr.send();
+			});
+		};
+
+		var handleBlobPackagedInstall = function(app, onProgress, resolve, reject) {
+			if (!app.download_url) {
+				reject('No download_url provided for packaged app');
+				return;
+			}
+
+			console.log('Fetching binary OmniSD blob from:', app.download_url);
+			
+			downloadBlob(app.download_url, onProgress)
+				.then(function(blob) {
+					if (onProgress) {
+						onProgress('installing');
+					}
+					
+					if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
+						var directRequest = navigator.mozApps.mgmt.import(blob);
+						
+						directRequest.onsuccess = function() {
+							console.log('In-place zip import succeeded. Preserved user data.');
+							resolve();
+						};
+						directRequest.onerror = function() {
+							var errName = this.error ? this.error.name : 'Unknown system error';
+							console.log('In-place zip import failed: ' + errName + '. Checking app status.');
+							
+							// Check if app is already installed to determine if uninstallation is actually a data-loss risk
+							checkAppStatus(app).then(function(status) {
+								if (status.localApp) {
+									// Destructive update warning
+									if (confirm('Direct update of ' + app.name + ' failed (' + errName + '). Perform clean install instead? WARNING: This will wipe your app data/saves.')) {
+										uninstallSilently(app).then(function() {
+											if (onProgress) {
+												onProgress('installing');
+											}
+											var secondRequest = navigator.mozApps.mgmt.import(blob);
+											secondRequest.onsuccess = function() {
+												resolve();
+											};
+											secondRequest.onerror = function() {
+												reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
+											};
+										});
+									} else {
+										reject('Update canceled to protect your app data.');
+									}
+								} else {
+									// No local match detected, but direct import failed. Try clean install as a fallback.
+									uninstallSilently(app).then(function() {
+										if (onProgress) {
+											onProgress('installing');
+										}
+										var secondRequest = navigator.mozApps.mgmt.import(blob);
+										secondRequest.onsuccess = function() {
+											resolve();
+										};
+										secondRequest.onerror = function() {
+											reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
+										};
+									});
+								}
+							});
+						};
+					} else {
+						reject('Privileged Management API missing. Is this device jailbroken?');
+					}
+				})
+				.catch(function(err) {
+					reject('Download failed: ' + err.message);
+				});
+		};
+
 		var request;
 		if (app.type === 'hosted') {
 			if (!app.manifest_url) {
@@ -131,113 +238,38 @@ function installFromApp(app, onProgress) {
 				}
 			};
 		} else {
-			if (!app.download_url) {
-				reject('No download_url provided for packaged app');
-				return;
+			// Packaged App Flow
+			var manifestUrl = app.manifest_url;
+			if (manifestUrl) {
+				if (manifestUrl.indexOf('raw.githubusercontent.com') !== -1) {
+					manifestUrl = manifestUrl.replace('raw.githubusercontent.com', 'raw.githack.com');
+				} else if (manifestUrl.indexOf('github.com') !== -1 && manifestUrl.indexOf('/raw/') !== -1) {
+					manifestUrl = manifestUrl.replace('github.com', 'raw.githack.com').replace('/raw/', '/');
+				}
 			}
-
-			console.log('Fetching binary OmniSD blob from:', app.download_url);
 			
-			// 1. Manually fetch the raw zip package binary using systemXHR to bypass CORS restrictions
-			var downloadBlob = function(url, progressCb) {
-				return new Promise(function(resolveBlob, rejectBlob) {
-					var xhr;
-					try {
-						// On device, create privileged systemXHR to bypass CORS
-						xhr = new XMLHttpRequest({ mozSystem: true });
-					} catch (e) {
-						// Fallback to standard request for standard browsers
-						xhr = new XMLHttpRequest();
-					}
-					xhr.open('GET', url, true);
-					xhr.responseType = 'blob';
+			if (manifestUrl && typeof navigator.mozApps.installPackage === 'function') {
+				console.log('Installing/Updating packaged app natively via:', manifestUrl);
+				if (onProgress) {
+					onProgress('installing');
+				}
+				
+				var request = navigator.mozApps.installPackage(manifestUrl);
+				request.onsuccess = function() {
+					console.log('Native install/update package succeeded. User data is fully preserved!');
+					resolve();
+				};
+				request.onerror = function() {
+					var errName = this.error ? this.error.name : 'Unknown error';
+					console.log('Native packaged install failed: ' + errName + '. Trying blob import fallback.');
 					
-					if (progressCb) {
-						xhr.onprogress = function(e) {
-							if (e.lengthComputable && e.total > 0) {
-								var percent = Math.round((e.loaded / e.total) * 100);
-								progressCb(percent);
-							}
-						};
-					}
-					
-					xhr.onload = function() {
-						if (xhr.status >= 200 && xhr.status < 300) {
-							resolveBlob(xhr.response);
-						} else {
-							rejectBlob(new Error('HTTP Error ' + xhr.status + ': ' + (xhr.statusText || 'Unknown')));
-						}
-					};
-					xhr.onerror = function() {
-						rejectBlob(new Error('Network request failed'));
-					};
-					xhr.send();
-				});
-			};
-
-			downloadBlob(app.download_url, onProgress)
-				.then(function(blob) {
-					// Update progress message that we are now swapping & installing the downloaded package
-					if (onProgress) {
-						onProgress('installing');
-					}
-					
-					// Try direct import (non-destructive) first
-					if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
-						var directRequest = navigator.mozApps.mgmt.import(blob);
-						
-						directRequest.onsuccess = function() {
-							console.log('In-place import succeeded. Preserved user data.');
-							resolve();
-						};
-						directRequest.onerror = function() {
-							var errName = this.error ? this.error.name : 'Unknown system error';
-							console.log('In-place import failed: ' + errName + '. Checking app status.');
-							
-							// Check if app is already installed to determine if uninstallation is actually a data-loss risk
-							checkAppStatus(app).then(function(status) {
-								if (status.localApp) {
-									// Destructive update warning
-									if (confirm('Direct update of ' + app.name + ' failed (' + errName + '). Perform clean install instead? WARNING: This will wipe your app data/saves.')) {
-										uninstallSilently(app).then(function() {
-											if (onProgress) {
-												onProgress('installing');
-											}
-											var secondRequest = navigator.mozApps.mgmt.import(blob);
-											secondRequest.onsuccess = function() {
-												resolve();
-											};
-											secondRequest.onerror = function() {
-												reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
-											};
-										});
-									} else {
-										reject('Update canceled to protect your app data.');
-									}
-								} else {
-									// For a completely new install, we can just uninstallSilently and retry directly
-									uninstallSilently(app).then(function() {
-										if (onProgress) {
-											onProgress('installing');
-										}
-										var secondRequest = navigator.mozApps.mgmt.import(blob);
-										secondRequest.onsuccess = function() {
-											resolve();
-										};
-										secondRequest.onerror = function() {
-											reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
-										};
-									});
-								}
-							});
-						};
-					} else {
-						reject('Privileged Management API missing. Is this device jailbroken?');
-					}
-				})
-				.catch(function(err) {
-					reject('Download failed: ' + err.message);
-				});
+					// Fall back to downloading zip and importing it via mgmt.import
+					handleBlobPackagedInstall(app, onProgress, resolve, reject);
+				};
+			} else {
+				// No manifest URL or installPackage API is missing, use direct blob download + mgmt.import
+				handleBlobPackagedInstall(app, onProgress, resolve, reject);
+			}
 		}
 	});
 }
@@ -340,6 +372,24 @@ function initSpatialNavigation() {
 var currentAppState = 'INSTALL';
 var currentLocalApp = null;
 
+function getAppVersion(localApp) {
+	if (!localApp) return "1.0";
+	var manifest = localApp.manifest || localApp.updateManifest;
+	if (manifest) {
+		if (typeof manifest === 'string') {
+			try {
+				manifest = JSON.parse(manifest);
+			} catch (e) {
+				console.error("Failed to parse manifest string:", e);
+			}
+		}
+		if (manifest && manifest.version) {
+			return manifest.version;
+		}
+	}
+	return "1.0";
+}
+
 function compareVersions(v1, v2) {
 	var parts1 = String(v1).split('.');
 	var parts2 = String(v2).split('.');
@@ -367,7 +417,8 @@ function checkAppStatus(app) {
 			
 			for (var i = 0; i < installedApps.length; i++) {
 				var installedApp = installedApps[i];
-				var installedName = (installedApp.manifest && installedApp.manifest.name) || '';
+				var installedName = (installedApp.manifest && installedApp.manifest.name) || 
+				                    (installedApp.updateManifest && installedApp.updateManifest.name) || '';
 				var checkingName = app.name || '';
 				
 				var isMatch = false;
@@ -396,7 +447,7 @@ function checkAppStatus(app) {
 			if (!localApp) {
 				resolve({ localApp: null, state: 'INSTALL' });
 			} else {
-				var localVersion = (localApp.manifest && localApp.manifest.version) || "1.0";
+				var localVersion = getAppVersion(localApp);
 				var serverVersion = app.version || "1.0";
 				
 				if (compareVersions(serverVersion, localVersion) > 0) {
@@ -442,12 +493,12 @@ function updateDetailViewUI(app, state, localApp) {
 			statusIndicator.classList.add('badge-status-install');
 			statusIndicator.style.color = '';
 		} else if (state === 'UPDATE') {
-			var localVersion = (localApp && localApp.manifest && localApp.manifest.version) || '1.0';
+			var localVersion = getAppVersion(localApp);
 			statusIndicator.textContent = 'Status: Update Available (Installed: ' + localVersion + ', Server: ' + (app.version || '1.0') + ')';
 			statusIndicator.classList.add('badge-status-update');
 			statusIndicator.style.color = '';
 		} else if (state === 'OPEN') {
-			var installedVersion = (localApp && localApp.manifest && localApp.manifest.version) || '1.0';
+			var installedVersion = getAppVersion(localApp);
 			statusIndicator.textContent = 'Status: Installed (v' + installedVersion + ')';
 			statusIndicator.classList.add('badge-status-open');
 			statusIndicator.style.color = '';
