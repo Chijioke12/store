@@ -138,39 +138,92 @@ function backupIndexedDB(appId, dbName, storeName) {
 			resolve(null);
 			return;
 		}
-		var dbRequest = window.indexedDB.open("app__" + appId + "_" + dbName);
-		dbRequest.onsuccess = function(event) {
-			var db = event.target.result;
-			try {
-				var transaction = db.transaction(storeName, "readonly");
-				var objectStore = transaction.objectStore(storeName);
-				var getAllRequest = objectStore.getAll();
-				getAllRequest.onsuccess = function() { resolve(getAllRequest.result); };
-				getAllRequest.onerror = function() { resolve(null); };
-			} catch(e) { resolve(null); }
+		// Some system environments use different prefixes, but we try the standard B2G internal one
+		var prefixes = ["app__" + appId + "_", appId + "_"];
+		var tryNextPrefix = function(index) {
+			if (index >= prefixes.length) {
+				resolve(null);
+				return;
+			}
+			var fullDbName = prefixes[index] + dbName;
+			var dbRequest = window.indexedDB.open(fullDbName);
+			dbRequest.onsuccess = function(event) {
+				var db = event.target.result;
+				try {
+					var transaction = db.transaction(storeName, "readonly");
+					var objectStore = transaction.objectStore(storeName);
+					var getAllRequest = objectStore.getAll();
+					getAllRequest.onsuccess = function() { 
+						if (getAllRequest.result && getAllRequest.result.length > 0) {
+							resolve({ db: fullDbName, data: getAllRequest.result });
+						} else {
+							db.close();
+							tryNextPrefix(index + 1);
+						}
+					};
+					getAllRequest.onerror = function() { db.close(); tryNextPrefix(index + 1); };
+				} catch(e) { db.close(); tryNextPrefix(index + 1); }
+			};
+			dbRequest.onerror = function() { tryNextPrefix(index + 1); };
 		};
-		dbRequest.onerror = function() { resolve(null); };
+		tryNextPrefix(0);
 	});
 }
 
-function restoreIndexedDB(appId, dbName, storeName, backupData) {
+function restoreIndexedDB(dbName, storeName, backupData) {
 	return new Promise(function(resolve) {
-		if (!appId || !dbName || !storeName || !backupData || backupData.length === 0 || !window.indexedDB) {
+		if (!dbName || !storeName || !backupData || backupData.length === 0 || !window.indexedDB) {
 			resolve();
 			return;
 		}
-		var dbRequest = window.indexedDB.open("app__" + appId + "_" + dbName);
+		var dbRequest = window.indexedDB.open(dbName);
 		dbRequest.onsuccess = function(event) {
 			var db = event.target.result;
 			try {
 				var transaction = db.transaction(storeName, "readwrite");
 				var objectStore = transaction.objectStore(storeName);
 				backupData.forEach(function(item) { objectStore.put(item); });
-				transaction.oncomplete = function() { resolve(); };
-			} catch(e) { resolve(); }
+				transaction.oncomplete = function() { db.close(); resolve(); };
+			} catch(e) { db.close(); resolve(); }
 		};
 		dbRequest.onerror = function() { resolve(); };
 	});
+}
+
+function backupAppPersistence(app) {
+	var fallbacks = [
+		{ db: "localforage", store: "keyvaluepairs" },
+		{ db: "datas", store: "datas" },
+		{ db: "app", store: "settings" },
+		{ db: app.id, store: "keyvaluepairs" },
+		{ db: app.id, store: "datas" }
+	];
+	if (app.db_name && app.store_name) {
+		fallbacks.unshift({ db: app.db_name, store: app.store_name });
+	}
+
+	var results = [];
+	var sequence = Promise.resolve();
+	fallbacks.forEach(function(target) {
+		sequence = sequence.then(function() {
+			return backupIndexedDB(app.id, target.db, target.store).then(function(res) {
+				if (res && res.data && res.data.length > 0) {
+					results.push({ db: res.db, store: target.store, data: res.data });
+				}
+			});
+		});
+	});
+	return sequence.then(function() { return results; });
+}
+
+function restoreAppPersistence(backups) {
+	var sequence = Promise.resolve();
+	backups.forEach(function(b) {
+		sequence = sequence.then(function() {
+			return restoreIndexedDB(b.db, b.store, b.data);
+		});
+	});
+	return sequence;
 }
 
 function uninstallSilently(app) {
@@ -303,9 +356,14 @@ function installFromApp(app, onProgress, forceClean) {
 
 			var runPurgeAndInstall = function() {
 				console.log('Initiating Clean Update Pipeline: Purging existing build first...');
-				return backupIndexedDB(app.id, app.db_name, app.store_name).then(function(backupData) {
-					if (backupData) {
-						console.log('Backup successful! Records found: ' + backupData.length);
+				return backupAppPersistence(app).then(function(backups) {
+					var recordCount = 0;
+					backups.forEach(function(b) { recordCount += b.data.length; });
+					
+					if (recordCount > 0) {
+						console.log('Backup successful! Records found: ' + recordCount + ' in ' + backups.length + ' databases.');
+					} else {
+						console.log('No data found to back up.');
 					}
 					
 					return uninstallSilently(app).then(function() {
@@ -320,7 +378,7 @@ function installFromApp(app, onProgress, forceClean) {
 								var importReq = navigator.mozApps.mgmt.import(blob);
 								importReq.onsuccess = function() {
 									console.log('Fresh package write succeeded. Restoring data...');
-									restoreIndexedDB(app.id, app.db_name, app.store_name, backupData).then(function() {
+									restoreAppPersistence(backups).then(function() {
 										console.log('Update pipeline successfully completed.');
 										resImport();
 									});
@@ -360,11 +418,11 @@ function installFromApp(app, onProgress, forceClean) {
 									if (status.localApp) {
 										showCustomConfirm('Clean Fallback', 'Direct update failed. Perform clean install? We will try to back up and restore your data.').then(function(confirmed) {
 											if (confirmed) {
-												backupIndexedDB(app.id, app.db_name, app.store_name).then(function(backupData) {
+												backupAppPersistence(app).then(function(backups) {
 													uninstallSilently(app).then(function() {
 														var secondRequest = navigator.mozApps.mgmt.import(blob);
 														secondRequest.onsuccess = function() {
-															restoreIndexedDB(app.id, app.db_name, app.store_name, backupData).then(function() {
+															restoreAppPersistence(backups).then(function() {
 																resolve();
 															});
 														};
