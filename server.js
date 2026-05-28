@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -8,8 +9,19 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = 3000;
 
-// Serve static files from the root directory so index.html, /src, and /public are accessible
-app.use(express.static(__dirname));
+// Check if production build directory exists
+const distPath = path.join(__dirname, 'dist');
+const useProduction = fs.existsSync(distPath);
+
+console.log(`Using ${useProduction ? 'production (dist)' : 'development (root)'} static assets`);
+
+if (useProduction) {
+  // In production, serve dist folder assets first, then fallback to root if needed
+  app.use(express.static(distPath));
+  app.use(express.static(__dirname));
+} else {
+  app.use(express.static(__dirname));
+}
 
 // Proxy or dynamically generate manifest files with correct content type for KaiOS installers
 app.get('/api/manifest', async (req, res) => {
@@ -89,6 +101,15 @@ app.get('/api/manifest', async (req, res) => {
     console.error('Error proxying manifest:', error);
     return res.status(500).send(`Server error proxying manifest: ${error.message}`);
   }
+});
+
+// Catch-all route to serve index.html for any frontend layout requests
+app.get('*', (req, res) => {
+  const distIndex = path.join(__dirname, 'dist', 'index.html');
+  if (fs.existsSync(distIndex)) {
+    return res.sendFile(distIndex);
+  }
+  return res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.listen(port, () => {

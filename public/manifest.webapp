@@ -11,6 +11,9 @@
   "permissions": {
     "webapps-manage": {
       "description": "Required to install hosted and packaged apps."
+    },
+    "systemXHR": {
+      "description": "Required to download packaged app binaries from external servers bypassing CORS."
     }
   }
 }

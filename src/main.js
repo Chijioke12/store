@@ -49,52 +49,55 @@ function installFromApp(app) {
 				reject('No download_url provided for packaged app');
 				return;
 			}
+
+			console.log('Fetching binary OmniSD blob from:', app.download_url);
 			
-			// Detect if we have a web server backend running on the current host.
-			// Standalone native packaged apps on a real device open with 'app://' protocol.
-			// Standalone hosted apps deployed to GitHub pages will open with '*.github.io'.
-			// Both of those are 100% static client-side environments and DO NOT have access to a backend server.
-			var hasBackend = window.location.protocol === 'http:' || window.location.protocol === 'https:';
-			if (hasBackend && window.location.hostname.indexOf('github.io') !== -1) {
-				hasBackend = false;
-			}
-			
-			var finalUrl;
-			if (hasBackend) {
-				// During AI Studio development preview, dynamically construct and proxy a valid manifest
-				// point-to-point to solve MIME type issues instantly without manually writing webapp files!
-				finalUrl = window.location.origin + '/api/manifest' + 
-				               '?name=' + encodeURIComponent(app.name || 'App') + 
-				               '&package_path=' + encodeURIComponent(app.download_url) + 
-				               '&version=' + encodeURIComponent(app.version || '1.0') + 
-				               '&developer=' + encodeURIComponent(app.author || 'Unknown');
-				console.log('Installing packaged app via backend proxy manifest:', finalUrl);
-			} else {
-				// On actual KaiOS device, we MUST request a real, hosted manifest file (.webapp / .json)
-				// served with exactly Content-Type: application/x-web-app-manifest+json.
-				var staticManifestUrl = app.manifest_url;
-				if (!staticManifestUrl) {
-					// Guess a standard registry path: manifests/[app_id].webapp
-					var appId = app.id || app.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-					staticManifestUrl = "https://raw.githack.com/Chijioke12/Open-KaiStore-Registry/main/manifests/" + appId + ".webapp";
-				}
-				
-				// Rewrite GitHub raw to GitHack so raw.githack.com serves it with the correct webapp Content-Type!
-				finalUrl = staticManifestUrl;
-				if (finalUrl.indexOf('raw.githubusercontent.com') !== -1) {
-					finalUrl = finalUrl.replace('raw.githubusercontent.com', 'raw.githack.com');
-				} else if (finalUrl.indexOf('github.com') !== -1 && finalUrl.indexOf('/raw/') !== -1) {
-					finalUrl = finalUrl.replace('github.com', 'raw.githack.com').replace('/raw/', '/');
-				}
-				console.log('Installing packaged app on device via GitHack served manifest:', finalUrl);
-			}
-			
-			request = navigator.mozApps.installPackage(finalUrl);
-			
-			request.onsuccess = resolve;
-			request.onerror = function () {
-				reject('Installing failed: ' + (this.error ? this.error.name : 'Unknown error'));
+			// 1. Manually fetch the raw zip package binary using systemXHR to bypass CORS restrictions
+			var downloadBlob = function(url) {
+				return new Promise(function(resolveBlob, rejectBlob) {
+					var xhr;
+					try {
+						// On device, create privileged systemXHR to bypass CORS
+						xhr = new XMLHttpRequest({ mozSystem: true });
+					} catch (e) {
+						// Fallback to standard request for standard browsers
+						xhr = new XMLHttpRequest();
+					}
+					xhr.open('GET', url, true);
+					xhr.responseType = 'blob';
+					xhr.onload = function() {
+						if (xhr.status >= 200 && xhr.status < 300) {
+							resolveBlob(xhr.response);
+						} else {
+							rejectBlob(new Error('HTTP Error ' + xhr.status + ': ' + (xhr.statusText || 'Unknown')));
+						}
+					};
+					xhr.onerror = function() {
+						rejectBlob(new Error('Network request failed'));
+					};
+					xhr.send();
+				});
 			};
+
+			downloadBlob(app.download_url)
+				.then(function(blob) {
+					// 2. Feed the raw package bundle into the native device storage manager
+					if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
+						var request = navigator.mozApps.mgmt.import(blob);
+						
+						request.onsuccess = function() {
+							resolve();
+						};
+						request.onerror = function() {
+							reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
+						};
+					} else {
+						reject('Privileged Management API missing. Is this device jailbroken?');
+					}
+				})
+				.catch(function(err) {
+					reject('Download failed: ' + err.message);
+				});
 		}
 	});
 }
@@ -132,7 +135,6 @@ function renderAppsFiltered(appsToRender) {
 		icon.className = 'app-icon';
 		icon.src = app.icon || 'icon.svg';
 		icon.alt = app.name + ' icon';
-		// Fallback for broken images
 		icon.onerror = function() { this.src = 'icon.svg'; };
 		
 		var info = document.createElement('div');
@@ -171,7 +173,6 @@ function renderAppsFiltered(appsToRender) {
 
 function initSpatialNavigation() {
 	var cards = document.querySelectorAll('.app-card');
-	var softkeyCenter = document.getElementById('softkey-center');
 	var searchInput = document.getElementById('search-input');
 	
 	if (cards.length > 0 && document.activeElement !== searchInput) {
@@ -181,17 +182,14 @@ function initSpatialNavigation() {
 	for (var i = 0; i < cards.length; i++) {
 		(function(card) {
 			card.addEventListener('focus', function() {
-				if (currentView === 'list') {
-					softkeyCenter.textContent = 'VIEW';
-				}
+				updateListSoftkeys();
 			});
 			card.addEventListener('blur', function() {
-				if (currentView === 'list') {
-					softkeyCenter.textContent = '';
-				}
+				updateListSoftkeys();
 			});
 		})(cards[i]);
 	}
+	updateListSoftkeys();
 }
 
 function showDetails(index) {
@@ -200,6 +198,7 @@ function showDetails(index) {
 	var app = cachedApps[index];
 	
 	document.getElementById('app-content').classList.add('hidden');
+	document.getElementById('view-settings').classList.add('hidden');
 	var detailsView = document.getElementById('view-details');
 	detailsView.classList.remove('hidden');
 	detailsView.scrollTop = 0;
@@ -244,9 +243,9 @@ function showDetails(index) {
 	detailsView.appendChild(typeInfo);
 	detailsView.appendChild(desc);
 	
+	document.getElementById('softkey-left').textContent = '';
 	document.getElementById('softkey-center').textContent = 'INSTALL';
 	document.getElementById('softkey-right').textContent = 'BACK';
-	document.getElementById('softkey-left').textContent = '';
 }
 
 function hideDetails() {
@@ -254,19 +253,93 @@ function hideDetails() {
 	document.getElementById('view-details').classList.add('hidden');
 	document.getElementById('app-content').classList.remove('hidden');
 	
-	document.getElementById('softkey-right').textContent = '';
-	document.getElementById('softkey-left').textContent = 'Search';
+	updateListSoftkeys();
 	var cards = document.querySelectorAll('.app-card');
 	if (currentAppIndex !== -1 && cards[currentAppIndex]) {
 		cards[currentAppIndex].focus();
+	}
+}
+
+function showSettings() {
+	currentView = 'settings';
+	document.getElementById('app-content').classList.add('hidden');
+	document.getElementById('view-details').classList.add('hidden');
+	
+	var viewSettings = document.getElementById('view-settings');
+	viewSettings.classList.remove('hidden');
+	
+	var proxyInput = document.getElementById('proxy-input');
+	proxyInput.value = localStorage.getItem('manifest_proxy_url') || '';
+	proxyInput.focus();
+	
+	document.getElementById('softkey-left').textContent = 'SAVE';
+	document.getElementById('softkey-center').textContent = '';
+	document.getElementById('softkey-right').textContent = 'BACK';
+}
+
+function hideSettings(save) {
+	if (save) {
+		var val = document.getElementById('proxy-input').value.trim();
+		if (val && !val.startsWith('http://') && !val.startsWith('https://')) {
+			alert('Proxy URL must start with http:// or https://');
+			return;
+		}
+		localStorage.setItem('manifest_proxy_url', val);
+		alert('Settings saved successfully!');
+	}
+	
+	currentView = 'list';
+	document.getElementById('view-settings').classList.add('hidden');
+	document.getElementById('app-content').classList.remove('hidden');
+	
+	updateListSoftkeys();
+	var cards = document.querySelectorAll('.app-card');
+	if (cards.length > 0) {
+		cards[0].focus();
+	}
+}
+
+function updateListSoftkeys() {
+	if (currentView !== 'list') return;
+	
+	var active = document.activeElement;
+	var isSearch = active && active.id === 'search-input';
+	
+	document.getElementById('softkey-left').textContent = 'SETTINGS';
+	
+	if (isSearch) {
+		document.getElementById('softkey-center').textContent = 'SEARCH';
+		document.getElementById('softkey-right').textContent = '';
 	} else {
-		document.getElementById('softkey-center').textContent = '';
+		document.getElementById('softkey-center').textContent = 'VIEW';
+		document.getElementById('softkey-right').textContent = 'SEARCH';
 	}
 }
 
 document.addEventListener('keydown', function(e) {
+	// 1. Settings View Key Event Handling
+	if (currentView === 'settings') {
+		if (e.key === 'Backspace' || e.key === 'Escape' || e.key === 'SoftRight' || e.key === 'F2') {
+			e.preventDefault();
+			hideSettings(false);
+			return;
+		}
+		if (e.key === 'SoftLeft' || e.key === 'F1') {
+			e.preventDefault();
+			hideSettings(true);
+			return;
+		}
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			hideSettings(true);
+			return;
+		}
+		return;
+	}
+
+	// 2. Details View Key Event Handling
 	if (currentView === 'details') {
-		if (e.key === 'Backspace' || e.key === 'Escape' || e.key === 'SoftRight') {
+		if (e.key === 'Backspace' || e.key === 'Escape' || e.key === 'SoftRight' || e.key === 'F2') {
 			e.preventDefault();
 			hideDetails();
 			return;
@@ -276,7 +349,6 @@ document.addEventListener('keydown', function(e) {
 			showMessagesFor(installFromApp(app), 'Installed successfully!');
 			return;
 		}
-		// If other keys, maybe we can scroll?
 		var detailsView = document.getElementById('view-details');
 		if (e.key === 'ArrowDown') {
 			detailsView.scrollTop += 30;
@@ -288,11 +360,28 @@ document.addEventListener('keydown', function(e) {
 		return;
 	}
 
+	// 3. Main List View Key Event Handling
 	var active = document.activeElement;
 	var isCard = active && active.classList.contains('app-card');
 	var isSearch = active && active.id === 'search-input';
 	var cards = Array.from(document.querySelectorAll('.app-card'));
 	var currentIndex = cards.indexOf(active);
+	
+	// Softkey triggers
+	if (e.key === 'SoftLeft' || e.key === 'F1') {
+		e.preventDefault();
+		showSettings();
+		return;
+	}
+	
+	if (e.key === 'SoftRight' || e.key === 'F2') {
+		e.preventDefault();
+		var searchInput = document.getElementById('search-input');
+		if (searchInput) {
+			searchInput.focus();
+		}
+		return;
+	}
 	
 	switch(e.key) {
 		case 'ArrowDown':
@@ -313,9 +402,9 @@ document.addEventListener('keydown', function(e) {
 					cards[currentIndex - 1].focus();
 					cards[currentIndex - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
 				} else if (currentIndex === 0) {
-					var searchInput = document.getElementById('search-input');
-					if (searchInput) {
-						searchInput.focus();
+					var searchInputStr = document.getElementById('search-input');
+					if (searchInputStr) {
+						searchInputStr.focus();
 					}
 				}
 			}
@@ -325,13 +414,6 @@ document.addEventListener('keydown', function(e) {
 			if (isCard) {
 				active.click();
 			}
-			break;
-		case 'SoftLeft':
-			var searchInput = document.getElementById('search-input');
-			if (searchInput && document.activeElement !== searchInput) {
-				searchInput.focus();
-			}
-			e.preventDefault();
 			break;
 	}
 });
@@ -360,10 +442,7 @@ function loadRegistry() {
 		});
 }
 
-// Init
 function initApp() {
-	document.getElementById('softkey-left').textContent = 'Search';
-	
 	var searchInput = document.getElementById('search-input');
 	if (searchInput) {
 		searchInput.addEventListener('input', function() {
@@ -377,16 +456,16 @@ function initApp() {
 		});
 
 		searchInput.addEventListener('focus', function() {
-			if (currentView === 'list') {
-				document.getElementById('softkey-center').textContent = 'SEARCH';
-			}
+			updateListSoftkeys();
 		});
 		searchInput.addEventListener('blur', function() {
-			if (currentView === 'list' && document.activeElement && document.activeElement.tagName !== 'INPUT') {
-				document.getElementById('softkey-center').textContent = '';
-			}
+			updateListSoftkeys();
 		});
 	}
+	
+	// Initial softkey render
+	updateListSoftkeys();
+	
 	loadRegistry();
 }
 
