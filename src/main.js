@@ -222,17 +222,29 @@ function checkAppStatus(app) {
 			
 			for (var i = 0; i < installedApps.length; i++) {
 				var installedApp = installedApps[i];
+				var installedName = (installedApp.manifest && installedApp.manifest.name) || '';
+				var checkingName = app.name || '';
+				
+				var isMatch = false;
 				if (app.type === 'hosted') {
 					if (installedApp.manifestURL === app.manifest_url) {
-						localApp = installedApp;
-						break;
+						isMatch = true;
 					}
 				} else {
 					var targetManifest = "app://" + app.id + "/manifest.webapp";
 					if (installedApp.manifestURL === targetManifest || installedApp.manifestURL === app.manifest_url) {
-						localApp = installedApp;
-						break;
+						isMatch = true;
 					}
+				}
+				
+				// Fallback to matching by name (case-insensitive & trimmed) for extra robustness
+				if (!isMatch && installedName && checkingName && installedName.toLowerCase().trim() === checkingName.toLowerCase().trim()) {
+					isMatch = true;
+				}
+				
+				if (isMatch) {
+					localApp = installedApp;
+					break;
 				}
 			}
 			
@@ -340,17 +352,29 @@ function uninstallApp(app, onSuccess) {
 
 		for (var i = 0; i < installedApps.length; i++) {
 			var installedApp = installedApps[i];
+			var installedName = (installedApp.manifest && installedApp.manifest.name) || '';
+			var checkingName = app.name || '';
+			
+			var isMatch = false;
 			if (app.type === 'hosted') {
 				if (installedApp.manifestURL === app.manifest_url) {
-					appToUninstall = installedApp;
-					break;
+					isMatch = true;
 				}
 			} else {
 				var targetManifest = "app://" + app.id + "/manifest.webapp";
 				if (installedApp.manifestURL === targetManifest || installedApp.manifestURL === app.manifest_url) {
-					appToUninstall = installedApp;
-					break;
+					isMatch = true;
 				}
+			}
+			
+			// Fallback to matching by name (case-insensitive & trimmed) for extra robustness
+			if (!isMatch && installedName && checkingName && installedName.toLowerCase().trim() === checkingName.toLowerCase().trim()) {
+				isMatch = true;
+			}
+			
+			if (isMatch) {
+				appToUninstall = installedApp;
+				break;
 			}
 		}
 
