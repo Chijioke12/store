@@ -11,6 +11,8 @@ var currentAppIndex = -1;
 var currentAppState = 'INSTALL';
 var currentLocalApp = null;
 
+var activeBackup = null; // Global memory cache for the most recently probed data
+
 function showCustomConfirm(title, message) {
 	return new Promise(function(resolve) {
 		var dialog = document.getElementById('custom-dialog');
@@ -195,8 +197,13 @@ function backupAppPersistence(app) {
 		{ db: "localforage", store: "keyvaluepairs" },
 		{ db: "datas", store: "datas" },
 		{ db: "app", store: "settings" },
+		{ db: "app_data", store: "items" },
+		{ db: "storage", store: "data" },
+		{ db: "cache", store: "values" },
+		{ db: "db", store: "records" },
 		{ db: app.id, store: "keyvaluepairs" },
-		{ db: app.id, store: "datas" }
+		{ db: app.id, store: "datas" },
+		{ db: app.id, store: "settings" }
 	];
 	if (app.db_name && app.store_name) {
 		fallbacks.unshift({ db: app.db_name, store: app.store_name });
@@ -213,7 +220,116 @@ function backupAppPersistence(app) {
 			});
 		});
 	});
-	return sequence.then(function() { return results; });
+	return sequence.then(function() { 
+		activeBackup = results; // Save to global memory
+		return results; 
+	});
+}
+
+function showDataManager(app) {
+	return new Promise(function(resolve) {
+		var prevView = currentView;
+		currentView = 'data-manager';
+		
+		var detailsView = document.getElementById('view-details');
+		detailsView.classList.add('hidden');
+		
+		var managerContainer = document.createElement('div');
+		managerContainer.id = 'data-manager-view';
+		managerContainer.className = 'container';
+		managerContainer.style.background = '#000';
+		managerContainer.style.zIndex = '200';
+		
+		var header = document.createElement('div');
+		header.className = 'app-header';
+		header.style.padding = '10px';
+		header.style.background = '#3498db';
+		header.style.color = '#fff';
+		header.textContent = 'Data Persistence Probe';
+		
+		var content = document.createElement('div');
+		content.style.padding = '10px';
+		content.style.fontSize = '12px';
+		content.style.color = '#ccc';
+		
+		var log = document.createElement('div');
+		log.id = 'probe-log';
+		log.style.marginTop = '10px';
+		log.style.border = '1px solid #333';
+		log.style.background = '#111';
+		log.style.padding = '5px';
+		log.style.maxHeight = '150px';
+		log.style.overflowY = 'auto';
+		log.innerHTML = 'Ready to probe environment for <b>' + app.id + '</b> patterns...';
+
+		content.appendChild(log);
+		
+		var btnRow = document.createElement('div');
+		btnRow.style.marginTop = '10px';
+		
+		var probeBtn = document.createElement('button');
+		probeBtn.textContent = 'SCAN & SAVE TO MEMORY';
+		probeBtn.style.width = '100%';
+		probeBtn.style.background = '#27ae60';
+		probeBtn.style.color = '#fff';
+		probeBtn.style.padding = '10px';
+		probeBtn.style.border = 'none';
+		probeBtn.style.marginBottom = '5px';
+		
+		probeBtn.onclick = function() {
+			log.innerHTML = 'Scanning local IndexedDB layers...';
+			backupAppPersistence(app).then(function(results) {
+				if (results.length > 0) {
+					var list = '<b>Found ' + results.length + ' database stores!</b><br/>';
+					results.forEach(function(r) {
+						list += '- ' + r.db + ' (' + r.data.length + ' rows)<br/>';
+					});
+					log.innerHTML = list + '<br/><span style="color:#2ecc71">DATA CACHED IN MEMORY. READY FOR UPDATE.</span>';
+				} else {
+					log.innerHTML = '<span style="color:#e74c3c">No data found in standard locations.</span><br/>Tip: Running in Developer Mode is often required to probe other apps.';
+				}
+			});
+		};
+
+		btnRow.appendChild(probeBtn);
+		
+		managerContainer.appendChild(header);
+		managerContainer.appendChild(content);
+		managerContainer.appendChild(btnRow);
+		document.body.appendChild(managerContainer);
+		
+		var prevLeft = document.getElementById('softkey-left').textContent;
+		var prevCenter = document.getElementById('softkey-center').textContent;
+		var prevRight = document.getElementById('softkey-right').textContent;
+		
+		document.getElementById('softkey-left').textContent = '';
+		document.getElementById('softkey-center').textContent = 'PROBE';
+		document.getElementById('softkey-right').textContent = 'CLOSE';
+		
+		function handleKey(e) {
+			if (currentView !== 'data-manager') return;
+			if (e.key === 'SoftRight' || e.key === 'F2' || e.key === 'Backspace') {
+				e.preventDefault();
+				cleanup();
+			} else if (e.key === 'Enter') {
+				e.preventDefault();
+				probeBtn.click();
+			}
+		}
+		
+		function cleanup() {
+			window.removeEventListener('keydown', handleKey, true);
+			managerContainer.remove();
+			currentView = prevView;
+			detailsView.classList.remove('hidden');
+			document.getElementById('softkey-left').textContent = prevLeft;
+			document.getElementById('softkey-center').textContent = prevCenter;
+			document.getElementById('softkey-right').textContent = prevRight;
+			resolve();
+		}
+		
+		window.addEventListener('keydown', handleKey, true);
+	});
 }
 
 function restoreAppPersistence(backups) {
@@ -362,6 +478,9 @@ function installFromApp(app, onProgress, forceClean) {
 					
 					if (recordCount > 0) {
 						console.log('Backup successful! Records found: ' + recordCount + ' in ' + backups.length + ' databases.');
+					} else if (activeBackup && activeBackup.length > 0) {
+						console.log('Using pre-probed memory data as fallback...');
+						backups = activeBackup;
 					} else {
 						console.log('No data found to back up.');
 					}
@@ -935,6 +1054,21 @@ function showDetails(index) {
 	checkAppStatus(app).then(function(result) {
 		if (currentView === 'details' && currentAppIndex === index) {
 			updateDetailViewUI(app, result.state, result.localApp);
+			
+			// Show Data Manager button if app is installed
+			if (result.state !== 'INSTALL') {
+				var dataBtn = document.createElement('div');
+				dataBtn.className = 'app-header';
+				dataBtn.style.marginTop = '20px';
+				dataBtn.style.padding = '10px';
+				dataBtn.style.border = '1px solid #333';
+				dataBtn.style.fontSize = '12px';
+				dataBtn.style.textAlign = 'center';
+				dataBtn.style.background = '#222';
+				dataBtn.innerHTML = '<b>DATA MANAGER</b><br/>Probe & Scan Persistence';
+				dataBtn.onclick = function() { showDataManager(app); };
+				document.getElementById('view-details').appendChild(dataBtn);
+			}
 		}
 	});
 }
