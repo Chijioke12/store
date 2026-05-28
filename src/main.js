@@ -132,6 +132,47 @@ function alert(msg) {
 	showCustomAlert('Notification', msg);
 }
 
+function backupIndexedDB(appId, dbName, storeName) {
+	return new Promise(function(resolve) {
+		if (!appId || !dbName || !storeName || !window.indexedDB) {
+			resolve(null);
+			return;
+		}
+		var dbRequest = window.indexedDB.open("app__" + appId + "_" + dbName);
+		dbRequest.onsuccess = function(event) {
+			var db = event.target.result;
+			try {
+				var transaction = db.transaction(storeName, "readonly");
+				var objectStore = transaction.objectStore(storeName);
+				var getAllRequest = objectStore.getAll();
+				getAllRequest.onsuccess = function() { resolve(getAllRequest.result); };
+				getAllRequest.onerror = function() { resolve(null); };
+			} catch(e) { resolve(null); }
+		};
+		dbRequest.onerror = function() { resolve(null); };
+	});
+}
+
+function restoreIndexedDB(appId, dbName, storeName, backupData) {
+	return new Promise(function(resolve) {
+		if (!appId || !dbName || !storeName || !backupData || backupData.length === 0 || !window.indexedDB) {
+			resolve();
+			return;
+		}
+		var dbRequest = window.indexedDB.open("app__" + appId + "_" + dbName);
+		dbRequest.onsuccess = function(event) {
+			var db = event.target.result;
+			try {
+				var transaction = db.transaction(storeName, "readwrite");
+				var objectStore = transaction.objectStore(storeName);
+				backupData.forEach(function(item) { objectStore.put(item); });
+				transaction.oncomplete = function() { resolve(); };
+			} catch(e) { resolve(); }
+		};
+		dbRequest.onerror = function() { resolve(); };
+	});
+}
+
 function uninstallSilently(app) {
 	return new Promise(function(resolve) {
 		if (!navigator.mozApps || !navigator.mozApps.mgmt) {
@@ -270,19 +311,28 @@ function installFromApp(app, onProgress, forceClean) {
 					
 					if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
 						if (forceClean) {
-							console.log('Force Clean Update Purge: removing existing build first...');
-							uninstallSilently(app).then(function() {
-								if (onProgress) {
-									onProgress('installing');
+							console.log('Force Clean Update Pipeline: Backing up data...');
+							backupIndexedDB(app.id, app.db_name, app.store_name).then(function(backupData) {
+								if (backupData) {
+									console.log('Backup successful! Records found: ' + backupData.length);
 								}
-								var secondRequest = navigator.mozApps.mgmt.import(blob);
-								secondRequest.onsuccess = function() {
-									console.log('Clean write succeeded!');
-									resolve();
-								};
-								secondRequest.onerror = function() {
-									reject('Import failed after purge: ' + (this.error ? this.error.name : 'Unknown system error'));
-								};
+								
+								return uninstallSilently(app).then(function() {
+									if (onProgress) {
+										onProgress('installing');
+									}
+									var secondRequest = navigator.mozApps.mgmt.import(blob);
+									secondRequest.onsuccess = function() {
+										console.log('Fresh package write succeeded. Restoring data...');
+										restoreIndexedDB(app.id, app.db_name, app.store_name, backupData).then(function() {
+											console.log('Update pipeline successfully completed.');
+											resolve();
+										});
+									};
+									secondRequest.onerror = function() {
+										reject('Import failed after purge: ' + (this.error ? this.error.name : 'Unknown system error'));
+									};
+								});
 							});
 						} else {
 							var directRequest = navigator.mozApps.mgmt.import(blob);
@@ -299,19 +349,23 @@ function installFromApp(app, onProgress, forceClean) {
 								checkAppStatus(app).then(function(status) {
 									if (status.localApp) {
 										// Destructive update warning
-										showCustomConfirm('Clean Fallback', 'Direct update of ' + app.name + ' failed (' + errName + '). Perform clean install instead? WARNING: Wipes saves.').then(function(confirmed) {
+										showCustomConfirm('Clean Fallback', 'Direct update failed. Perform clean install? We will try to back up and restore your data.').then(function(confirmed) {
 											if (confirmed) {
-												uninstallSilently(app).then(function() {
-													if (onProgress) {
-														onProgress('installing');
-													}
-													var secondRequest = navigator.mozApps.mgmt.import(blob);
-													secondRequest.onsuccess = function() {
-														resolve();
-													};
-													secondRequest.onerror = function() {
-														reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
-													};
+												backupIndexedDB(app.id, app.db_name, app.store_name).then(function(backupData) {
+													uninstallSilently(app).then(function() {
+														if (onProgress) {
+															onProgress('installing');
+														}
+														var secondRequest = navigator.mozApps.mgmt.import(blob);
+														secondRequest.onsuccess = function() {
+															restoreIndexedDB(app.id, app.db_name, app.store_name, backupData).then(function() {
+																resolve();
+															});
+														};
+														secondRequest.onerror = function() {
+															reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
+														};
+													});
 												});
 											} else {
 												reject('Update canceled to protect your app data.');
@@ -906,7 +960,7 @@ document.addEventListener('keydown', function(e) {
 				};
 				
 				if (currentAppState === 'UPDATE') {
-					showCustomConfirm('Clean Update?', 'Do a clean rewrite update? Prevents B2G system hangs, but will wipe app data/saves.').then(function(cleanRequested) {
+					showCustomConfirm('Clean Update?', 'Do a clean rewrite update? Prevents system hangs. We will try to back up and restore your data.').then(function(cleanRequested) {
 						proceedWithInstall(cleanRequested);
 					});
 				} else {
