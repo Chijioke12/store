@@ -38,9 +38,13 @@ function showCustomConfirm(title, message) {
 			
 			if (e.key === 'SoftLeft' || e.key === 'F1' || e.key === 'ArrowLeft') {
 				e.preventDefault();
+				e.stopPropagation();
+				if (e.stopImmediatePropagation) e.stopImmediatePropagation();
 				cleanup(true);
 			} else if (e.key === 'SoftRight' || e.key === 'F2' || e.key === 'Backspace' || e.key === 'Escape' || e.key === 'ArrowRight') {
 				e.preventDefault();
+				e.stopPropagation();
+				if (e.stopImmediatePropagation) e.stopImmediatePropagation();
 				cleanup(false);
 			}
 		}
@@ -95,6 +99,8 @@ function showCustomAlert(title, message) {
 			
 			if (e.key === 'Enter' || e.key === 'SoftLeft' || e.key === 'F1' || e.key === 'SoftRight' || e.key === 'F2' || e.key === 'Backspace' || e.key === 'Escape') {
 				e.preventDefault();
+				e.stopPropagation();
+				if (e.stopImmediatePropagation) e.stopImmediatePropagation();
 				cleanup();
 			}
 		}
@@ -197,7 +203,7 @@ function uninstallSilently(app) {
 	});
 }
 
-function installFromApp(app, onProgress) {
+function installFromApp(app, onProgress, forceClean) {
 	return new Promise(function (resolve, reject) {
 		if (!app) {
 			reject('No app provided');
@@ -248,7 +254,7 @@ function installFromApp(app, onProgress) {
 			});
 		};
 
-		var handleBlobPackagedInstall = function(app, onProgress, resolve, reject) {
+		var handleBlobPackagedInstall = function(app, onProgress, resolve, reject, forceClean) {
 			if (!app.download_url) {
 				reject('No download_url provided for packaged app');
 				return;
@@ -263,55 +269,72 @@ function installFromApp(app, onProgress) {
 					}
 					
 					if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
-						var directRequest = navigator.mozApps.mgmt.import(blob);
-						
-						directRequest.onsuccess = function() {
-							console.log('In-place zip import succeeded. Preserved user data.');
-							resolve();
-						};
-						directRequest.onerror = function() {
-							var errName = this.error ? this.error.name : 'Unknown system error';
-							console.log('In-place zip import failed: ' + errName + '. Checking app status.');
-							
-							// Check if app is already installed to determine if uninstallation is actually a data-loss risk
-							checkAppStatus(app).then(function(status) {
-								if (status.localApp) {
-									// Destructive update warning
-									showCustomConfirm('Clean Install Fallback', 'Direct update of ' + app.name + ' failed (' + errName + '). Perform clean install instead? WARNING: This will wipe your app data/saves.').then(function(confirmed) {
-										if (confirmed) {
-											uninstallSilently(app).then(function() {
-												if (onProgress) {
-													onProgress('installing');
-												}
-												var secondRequest = navigator.mozApps.mgmt.import(blob);
-												secondRequest.onsuccess = function() {
-													resolve();
-												};
-												secondRequest.onerror = function() {
-													reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
-												};
-											});
-										} else {
-											reject('Update canceled to protect your app data.');
-										}
-									});
-								} else {
-									// No local match detected, but direct import failed. Try clean install as a fallback.
-									uninstallSilently(app).then(function() {
-										if (onProgress) {
-											onProgress('installing');
-										}
-										var secondRequest = navigator.mozApps.mgmt.import(blob);
-										secondRequest.onsuccess = function() {
-											resolve();
-										};
-										secondRequest.onerror = function() {
-											reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
-										};
-									});
+						if (forceClean) {
+							console.log('Force Clean Update Purge: removing existing build first...');
+							uninstallSilently(app).then(function() {
+								if (onProgress) {
+									onProgress('installing');
 								}
+								var secondRequest = navigator.mozApps.mgmt.import(blob);
+								secondRequest.onsuccess = function() {
+									console.log('Clean write succeeded!');
+									resolve();
+								};
+								secondRequest.onerror = function() {
+									reject('Import failed after purge: ' + (this.error ? this.error.name : 'Unknown system error'));
+								};
 							});
-						};
+						} else {
+							var directRequest = navigator.mozApps.mgmt.import(blob);
+							
+							directRequest.onsuccess = function() {
+								console.log('In-place zip import succeeded. Preserved user data.');
+								resolve();
+							};
+							directRequest.onerror = function() {
+								var errName = this.error ? this.error.name : 'Unknown system error';
+								console.log('In-place zip import failed: ' + errName + '. Checking app status.');
+								
+								// Check if app is already installed to determine if uninstallation is actually a data-loss risk
+								checkAppStatus(app).then(function(status) {
+									if (status.localApp) {
+										// Destructive update warning
+										showCustomConfirm('Clean Fallback', 'Direct update of ' + app.name + ' failed (' + errName + '). Perform clean install instead? WARNING: Wipes saves.').then(function(confirmed) {
+											if (confirmed) {
+												uninstallSilently(app).then(function() {
+													if (onProgress) {
+														onProgress('installing');
+													}
+													var secondRequest = navigator.mozApps.mgmt.import(blob);
+													secondRequest.onsuccess = function() {
+														resolve();
+													};
+													secondRequest.onerror = function() {
+														reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
+													};
+												});
+											} else {
+												reject('Update canceled to protect your app data.');
+											}
+										});
+									} else {
+										// No local match detected, but direct import failed. Try clean install as a fallback.
+										uninstallSilently(app).then(function() {
+											if (onProgress) {
+												onProgress('installing');
+											}
+											var secondRequest = navigator.mozApps.mgmt.import(blob);
+											secondRequest.onsuccess = function() {
+												resolve();
+											};
+											secondRequest.onerror = function() {
+												reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
+											};
+										});
+									}
+								});
+							};
+						}
 					} else {
 						reject('Privileged Management API missing. Is this device jailbroken?');
 					}
@@ -363,7 +386,7 @@ function installFromApp(app, onProgress) {
 			// Packaged App Flow
 			// For third-party stores and sideloading, always use blob download + mgmt.import.
 			// This avoids native installPackage manifestURL conflicts and has parity with WebIDE.
-			handleBlobPackagedInstall(app, onProgress, resolve, reject);
+			handleBlobPackagedInstall(app, onProgress, resolve, reject, forceClean);
 		}
 	});
 }
@@ -857,27 +880,38 @@ document.addEventListener('keydown', function(e) {
 			e.preventDefault();
 			if (currentAppState === 'INSTALL' || currentAppState === 'UPDATE') {
 				var statusIndicator = document.getElementById('details-status-indicator');
-				if (statusIndicator) {
-					statusIndicator.textContent = 'Starting download...';
-					statusIndicator.style.color = '#3498db';
-				}
-				document.getElementById('softkey-center').textContent = 'WAIT...';
 				
-				installFromApp(app, function(percent) {
+				var proceedWithInstall = function(forceClean) {
 					if (statusIndicator) {
-						if (percent === 'installing') {
-							statusIndicator.textContent = 'Swapping & Installing...';
-						} else {
-							statusIndicator.textContent = 'Downloading: ' + percent + '%';
-						}
+						statusIndicator.textContent = 'Starting download...';
+						statusIndicator.style.color = '#3498db';
 					}
-				}).then(function() {
-					alert('Installed successfully!');
-					refreshAppStatusMultipleTimes(app);
-				}).catch(function(err) {
-					alert(err);
-					refreshAppStatusMultipleTimes(app);
-				});
+					document.getElementById('softkey-center').textContent = 'WAIT...';
+					
+					installFromApp(app, function(percent) {
+						if (statusIndicator) {
+							if (percent === 'installing') {
+								statusIndicator.textContent = 'Swapping & Installing...';
+							} else {
+								statusIndicator.textContent = 'Downloading: ' + percent + '%';
+							}
+						}
+					}, forceClean).then(function() {
+						alert('Installed successfully!');
+						refreshAppStatusMultipleTimes(app);
+					}).catch(function(err) {
+						alert(err);
+						refreshAppStatusMultipleTimes(app);
+					});
+				};
+				
+				if (currentAppState === 'UPDATE') {
+					showCustomConfirm('Clean Update?', 'Do a clean rewrite update? Prevents B2G system hangs, but will wipe app data/saves.').then(function(cleanRequested) {
+						proceedWithInstall(cleanRequested);
+					});
+				} else {
+					proceedWithInstall(false);
+				}
 			} else if (currentAppState === 'OPEN') {
 				openApp(app.id, app, currentLocalApp);
 			}
