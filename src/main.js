@@ -110,14 +110,26 @@ function installFromApp(app, onProgress) {
 			
 			console.log('Installing hosted app via:', manifestUrl);
 			
-			// For hosted app, trigger uninstallSilently before install to cleanly overwrite any existing registration
-			uninstallSilently(app).then(function() {
-				request = navigator.mozApps.install(manifestUrl);
-				request.onsuccess = resolve;
-				request.onerror = function () {
-					reject('Installing failed: ' + (this.error ? this.error.name : 'Unknown error'));
-				};
-			});
+			// Direct install first (non-destructive)
+			request = navigator.mozApps.install(manifestUrl);
+			request.onsuccess = resolve;
+			request.onerror = function () {
+				var errName = this.error ? this.error.name : 'Unknown error';
+				console.log('Direct install failed: ' + errName + '. Trying fallback clean install.');
+				
+				// Fallback to clean install if allowed
+				if (confirm('Direct update of ' + app.name + ' failed with ' + errName + '. Perform clean install instead? WARNING: This will wipe your app data/saves.')) {
+					uninstallSilently(app).then(function() {
+						var secondRequest = navigator.mozApps.install(manifestUrl);
+						secondRequest.onsuccess = resolve;
+						secondRequest.onerror = function() {
+							reject('Installing failed: ' + (this.error ? this.error.name : 'Unknown error'));
+						};
+					});
+				} else {
+					reject('Update canceled to protect your app data.');
+				}
+			};
 		} else {
 			if (!app.download_url) {
 				reject('No download_url provided for packaged app');
@@ -170,22 +182,58 @@ function installFromApp(app, onProgress) {
 						onProgress('installing');
 					}
 					
-					// 2. Perform system swapping: programmatically uninstall any existing conflicted package FIRST
-					return uninstallSilently(app).then(function() {
-						// 3. Feed the raw package bundle into the native device storage manager
-						if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
-							var request = navigator.mozApps.mgmt.import(blob);
+					// Try direct import (non-destructive) first
+					if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
+						var directRequest = navigator.mozApps.mgmt.import(blob);
+						
+						directRequest.onsuccess = function() {
+							console.log('In-place import succeeded. Preserved user data.');
+							resolve();
+						};
+						directRequest.onerror = function() {
+							var errName = this.error ? this.error.name : 'Unknown system error';
+							console.log('In-place import failed: ' + errName + '. Checking app status.');
 							
-							request.onsuccess = function() {
-								resolve();
-							};
-							request.onerror = function() {
-								reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
-							};
-						} else {
-							reject('Privileged Management API missing. Is this device jailbroken?');
-						}
-					});
+							// Check if app is already installed to determine if uninstallation is actually a data-loss risk
+							checkAppStatus(app).then(function(status) {
+								if (status.localApp) {
+									// Destructive update warning
+									if (confirm('Direct update of ' + app.name + ' failed (' + errName + '). Perform clean install instead? WARNING: This will wipe your app data/saves.')) {
+										uninstallSilently(app).then(function() {
+											if (onProgress) {
+												onProgress('installing');
+											}
+											var secondRequest = navigator.mozApps.mgmt.import(blob);
+											secondRequest.onsuccess = function() {
+												resolve();
+											};
+											secondRequest.onerror = function() {
+												reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
+											};
+										});
+									} else {
+										reject('Update canceled to protect your app data.');
+									}
+								} else {
+									// For a completely new install, we can just uninstallSilently and retry directly
+									uninstallSilently(app).then(function() {
+										if (onProgress) {
+											onProgress('installing');
+										}
+										var secondRequest = navigator.mozApps.mgmt.import(blob);
+										secondRequest.onsuccess = function() {
+											resolve();
+										};
+										secondRequest.onerror = function() {
+											reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
+										};
+									});
+								}
+							});
+						};
+					} else {
+						reject('Privileged Management API missing. Is this device jailbroken?');
+					}
 				})
 				.catch(function(err) {
 					reject('Download failed: ' + err.message);
