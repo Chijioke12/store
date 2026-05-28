@@ -301,40 +301,50 @@ function installFromApp(app, onProgress, forceClean) {
 				return;
 			}
 
-			console.log('Fetching binary OmniSD blob from:', app.download_url);
-			
-			downloadBlob(app.download_url, onProgress)
-				.then(function(blob) {
-					if (onProgress) {
-						onProgress('installing');
+			var runPurgeAndInstall = function() {
+				console.log('Initiating Clean Update Pipeline: Purging existing build first...');
+				return backupIndexedDB(app.id, app.db_name, app.store_name).then(function(backupData) {
+					if (backupData) {
+						console.log('Backup successful! Records found: ' + backupData.length);
 					}
 					
-					if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
-						if (forceClean) {
-							console.log('Force Clean Update Pipeline: Backing up data...');
-							backupIndexedDB(app.id, app.db_name, app.store_name).then(function(backupData) {
-								if (backupData) {
-									console.log('Backup successful! Records found: ' + backupData.length);
-								}
-								
-								return uninstallSilently(app).then(function() {
-									if (onProgress) {
-										onProgress('installing');
-									}
-									var secondRequest = navigator.mozApps.mgmt.import(blob);
-									secondRequest.onsuccess = function() {
-										console.log('Fresh package write succeeded. Restoring data...');
-										restoreIndexedDB(app.id, app.db_name, app.store_name, backupData).then(function() {
-											console.log('Update pipeline successfully completed.');
-											resolve();
-										});
-									};
-									secondRequest.onerror = function() {
-										reject('Import failed after purge: ' + (this.error ? this.error.name : 'Unknown system error'));
-									};
-								});
+					return uninstallSilently(app).then(function() {
+						if (onProgress) {
+							onProgress('downloading');
+						}
+						return downloadBlob(app.download_url, onProgress).then(function(blob) {
+							if (onProgress) {
+								onProgress('installing');
+							}
+							return new Promise(function(resImport, rejImport) {
+								var importReq = navigator.mozApps.mgmt.import(blob);
+								importReq.onsuccess = function() {
+									console.log('Fresh package write succeeded. Restoring data...');
+									restoreIndexedDB(app.id, app.db_name, app.store_name, backupData).then(function() {
+										console.log('Update pipeline successfully completed.');
+										resImport();
+									});
+								};
+								importReq.onerror = function() {
+									rejImport(new Error('Import failed after purge: ' + (this.error ? this.error.name : 'Unknown system error')));
+								};
 							});
-						} else {
+						});
+					});
+				});
+			};
+
+			if (forceClean) {
+				runPurgeAndInstall().then(resolve).catch(reject);
+			} else {
+				console.log('Fetching binary OmniSD blob for in-place update...');
+				downloadBlob(app.download_url, onProgress)
+					.then(function(blob) {
+						if (onProgress) {
+							onProgress('installing');
+						}
+						
+						if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.import === 'function') {
 							var directRequest = navigator.mozApps.mgmt.import(blob);
 							
 							directRequest.onsuccess = function() {
@@ -343,19 +353,15 @@ function installFromApp(app, onProgress, forceClean) {
 							};
 							directRequest.onerror = function() {
 								var errName = this.error ? this.error.name : 'Unknown system error';
-								console.log('In-place zip import failed: ' + errName + '. Checking app status.');
+								console.log('In-place zip import failed: ' + errName + '. Falling back to clean install...');
 								
 								// Check if app is already installed to determine if uninstallation is actually a data-loss risk
 								checkAppStatus(app).then(function(status) {
 									if (status.localApp) {
-										// Destructive update warning
 										showCustomConfirm('Clean Fallback', 'Direct update failed. Perform clean install? We will try to back up and restore your data.').then(function(confirmed) {
 											if (confirmed) {
 												backupIndexedDB(app.id, app.db_name, app.store_name).then(function(backupData) {
 													uninstallSilently(app).then(function() {
-														if (onProgress) {
-															onProgress('installing');
-														}
 														var secondRequest = navigator.mozApps.mgmt.import(blob);
 														secondRequest.onsuccess = function() {
 															restoreIndexedDB(app.id, app.db_name, app.store_name, backupData).then(function() {
@@ -372,15 +378,10 @@ function installFromApp(app, onProgress, forceClean) {
 											}
 										});
 									} else {
-										// No local match detected, but direct import failed. Try clean install as a fallback.
+										// No local match detected, but direct import failed. Try clean install anyway.
 										uninstallSilently(app).then(function() {
-											if (onProgress) {
-												onProgress('installing');
-											}
 											var secondRequest = navigator.mozApps.mgmt.import(blob);
-											secondRequest.onsuccess = function() {
-												resolve();
-											};
+											secondRequest.onsuccess = resolve;
 											secondRequest.onerror = function() {
 												reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
 											};
@@ -388,14 +389,14 @@ function installFromApp(app, onProgress, forceClean) {
 									}
 								});
 							};
+						} else {
+							reject('Privileged Management API missing. Is this device jailbroken?');
 						}
-					} else {
-						reject('Privileged Management API missing. Is this device jailbroken?');
-					}
-				})
-				.catch(function(err) {
-					reject('Download failed: ' + err.message);
-				});
+					})
+					.catch(function(err) {
+						reject('Download failed: ' + err.message);
+					});
+			}
 		};
 
 		var request;
