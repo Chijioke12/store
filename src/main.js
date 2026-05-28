@@ -144,25 +144,30 @@ function renderAppsFiltered(appsToRender) {
 		title.className = 'app-title';
 		title.textContent = app.name;
 		
+		var metaRow = document.createElement('div');
+		metaRow.className = 'app-meta-row';
+		
 		var author = document.createElement('p');
 		author.className = 'app-author';
 		author.textContent = app.author || 'Unknown Author';
 		
+		var typeBadge = document.createElement('span');
+		typeBadge.className = 'badge ' + (app.type === 'hosted' ? 'badge-hosted' : 'badge-packaged');
+		typeBadge.textContent = app.type === 'hosted' ? 'Hosted' : 'Packaged';
+		
+		metaRow.appendChild(author);
+		metaRow.appendChild(typeBadge);
+		
 		info.appendChild(title);
-		info.appendChild(author);
+		info.appendChild(metaRow);
 		header.appendChild(icon);
 		header.appendChild(info);
-		
-		var desc = document.createElement('p');
-		desc.className = 'app-description';
-		desc.textContent = app.description || 'No description available.';
 		
 		card.addEventListener('click', function() {
 			showDetails(index);
 		});
 		
 		card.appendChild(header);
-		card.appendChild(desc);
 		
 		listContainer.appendChild(card);
 	});
@@ -291,17 +296,21 @@ function updateDetailViewUI(app, state, localApp) {
 	
 	var statusIndicator = document.getElementById('details-status-indicator');
 	if (statusIndicator) {
+		statusIndicator.className = 'badge-status'; // Reset base status classes
 		if (state === 'INSTALL') {
 			statusIndicator.textContent = 'Status: Not Installed';
-			statusIndicator.style.color = '#777';
+			statusIndicator.classList.add('badge-status-install');
+			statusIndicator.style.color = '';
 		} else if (state === 'UPDATE') {
 			var localVersion = (localApp && localApp.manifest && localApp.manifest.version) || '1.0';
 			statusIndicator.textContent = 'Status: Update Available (Installed: ' + localVersion + ', Server: ' + (app.version || '1.0') + ')';
-			statusIndicator.style.color = '#f1c40f';
+			statusIndicator.classList.add('badge-status-update');
+			statusIndicator.style.color = '';
 		} else if (state === 'OPEN') {
 			var installedVersion = (localApp && localApp.manifest && localApp.manifest.version) || '1.0';
 			statusIndicator.textContent = 'Status: Installed (v' + installedVersion + ')';
-			statusIndicator.style.color = '#2ecc71';
+			statusIndicator.classList.add('badge-status-open');
+			statusIndicator.style.color = '';
 		}
 	}
 	
@@ -440,16 +449,13 @@ function showDetails(index) {
 	
 	detailsView.innerHTML = '';
 	
-	var header = document.createElement('div');
-	header.className = 'app-header';
+	var hero = document.createElement('div');
+	hero.className = 'details-hero';
 	
 	var icon = document.createElement('img');
 	icon.className = 'app-icon';
 	icon.src = app.icon || 'icon.svg';
 	icon.onerror = function() { this.src = 'icon.svg'; };
-	
-	var info = document.createElement('div');
-	info.className = 'app-info';
 	
 	var title = document.createElement('h2');
 	title.className = 'app-title';
@@ -459,31 +465,39 @@ function showDetails(index) {
 	author.className = 'app-author';
 	author.textContent = app.author || 'Unknown Author';
 	
-	info.appendChild(title);
-	info.appendChild(author);
-	header.appendChild(icon);
-	header.appendChild(info);
+	var metaContainer = document.createElement('div');
+	metaContainer.className = 'details-meta-container';
+	
+	var typeBadge = document.createElement('span');
+	typeBadge.className = 'badge ' + (app.type === 'hosted' ? 'badge-hosted' : 'badge-packaged');
+	typeBadge.textContent = app.type === 'hosted' ? 'Hosted' : 'Packaged';
+	metaContainer.appendChild(typeBadge);
+	
+	hero.appendChild(icon);
+	hero.appendChild(title);
+	hero.appendChild(author);
+	hero.appendChild(metaContainer);
+	
+	var descCard = document.createElement('div');
+	descCard.className = 'details-description-card';
+	
+	var descTitle = document.createElement('div');
+	descTitle.className = 'details-section-title';
+	descTitle.textContent = 'About';
 	
 	var desc = document.createElement('div');
 	desc.className = 'details-description';
 	desc.textContent = app.description || 'No description available.';
 	
-	var typeInfo = document.createElement('p');
-	typeInfo.className = 'app-author';
-	typeInfo.style.marginTop = '10px';
-	typeInfo.style.fontWeight = 'bold';
-	typeInfo.textContent = 'Type: ' + (app.type === 'hosted' ? 'Hosted' : 'Packaged');
+	descCard.appendChild(descTitle);
+	descCard.appendChild(desc);
 	
-	detailsView.appendChild(header);
-	detailsView.appendChild(typeInfo);
-	detailsView.appendChild(desc);
+	detailsView.appendChild(hero);
+	detailsView.appendChild(descCard);
 	
-	var statusIndicator = document.createElement('p');
+	var statusIndicator = document.createElement('div');
 	statusIndicator.id = 'details-status-indicator';
-	statusIndicator.className = 'app-author';
-	statusIndicator.style.marginTop = '10px';
-	statusIndicator.style.fontWeight = 'bold';
-	statusIndicator.style.color = '#777';
+	statusIndicator.className = 'badge-status badge-status-install';
 	statusIndicator.textContent = 'Checking device status...';
 	detailsView.appendChild(statusIndicator);
 	
