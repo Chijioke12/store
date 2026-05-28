@@ -267,6 +267,24 @@ function checkAppStatus(app) {
 	});
 }
 
+function refreshAppStatusMultipleTimes(app) {
+	var checkAndUpdate = function() {
+		checkAppStatus(app).then(function(result) {
+			if (currentView === 'details' && cachedApps[currentAppIndex] && cachedApps[currentAppIndex].id === app.id) {
+				updateDetailViewUI(app, result.state, result.localApp);
+			}
+		});
+	};
+	
+	// Check immediately
+	checkAndUpdate();
+	
+	// Check after 500ms, 1500ms, and 3000ms to handle index/db delays on lower-tier KaiOS builds
+	setTimeout(checkAndUpdate, 500);
+	setTimeout(checkAndUpdate, 1500);
+	setTimeout(checkAndUpdate, 3000);
+}
+
 function updateDetailViewUI(app, state, localApp) {
 	currentAppState = state;
 	currentLocalApp = localApp;
@@ -379,7 +397,18 @@ function uninstallApp(app, onSuccess) {
 		}
 
 		if (appToUninstall) {
-			var uninstReq = appToUninstall.uninstall();
+			var uninstReq;
+			// Check if standard B2G mgmt.uninstall API is available, otherwise fall back to DOMApplication.uninstall method
+			if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.uninstall === 'function') {
+				console.log("Using navigator.mozApps.mgmt.uninstall(app) to uninstall...");
+				uninstReq = navigator.mozApps.mgmt.uninstall(appToUninstall);
+			} else if (typeof appToUninstall.uninstall === 'function') {
+				console.log("Using appToUninstall.uninstall() to uninstall...");
+				uninstReq = appToUninstall.uninstall();
+			} else {
+				alert("Uninstall function not available. If you are on KaiOS 3.0+, use the standard system application launcher.");
+				return;
+			}
 			
 			uninstReq.onsuccess = function() {
 				alert("Application successfully removed.");
@@ -513,11 +542,7 @@ document.addEventListener('keydown', function(e) {
 			e.preventDefault();
 			if (currentAppState === 'OPEN' || currentAppState === 'UPDATE') {
 				uninstallApp(app, function() {
-					checkAppStatus(app).then(function(result) {
-						if (currentView === 'details') {
-							updateDetailViewUI(app, result.state, result.localApp);
-						}
-					});
+					refreshAppStatusMultipleTimes(app);
 				});
 			}
 			return;
@@ -535,18 +560,10 @@ document.addEventListener('keydown', function(e) {
 				
 				installFromApp(app).then(function() {
 					alert('Installed successfully!');
-					checkAppStatus(app).then(function(result) {
-						if (currentView === 'details') {
-							updateDetailViewUI(app, result.state, result.localApp);
-						}
-					});
+					refreshAppStatusMultipleTimes(app);
 				}).catch(function(err) {
 					alert(err);
-					checkAppStatus(app).then(function(result) {
-						if (currentView === 'details') {
-							updateDetailViewUI(app, result.state, result.localApp);
-						}
-					});
+					refreshAppStatusMultipleTimes(app);
 				});
 			} else if (currentAppState === 'OPEN') {
 				openApp(app.id, app, currentLocalApp);
@@ -641,6 +658,22 @@ function loadRegistry() {
 }
 
 function initApp() {
+	// Register global B2G application management system event listeners
+	if (navigator.mozApps && navigator.mozApps.mgmt) {
+		navigator.mozApps.mgmt.oninstall = function(event) {
+			console.log("System-wide app installed event received:", (event.application && event.application.manifestURL));
+			if (currentView === 'details' && cachedApps[currentAppIndex]) {
+				refreshAppStatusMultipleTimes(cachedApps[currentAppIndex]);
+			}
+		};
+		navigator.mozApps.mgmt.onuninstall = function(event) {
+			console.log("System-wide app uninstalled event received:", (event.application && event.application.manifestURL));
+			if (currentView === 'details' && cachedApps[currentAppIndex]) {
+				refreshAppStatusMultipleTimes(cachedApps[currentAppIndex]);
+			}
+		};
+	}
+
 	var searchInput = document.getElementById('search-input');
 	if (searchInput) {
 		searchInput.addEventListener('input', function() {
