@@ -326,3 +326,67 @@ header {
 	color: #38bdf8; /* Highlight action in light blue */
 }
 
+#custom-dialog {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: calc(100% - 26px); /* Leave room for softkey bar */
+	background: rgba(15, 23, 42, 0.75);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 999;
+	box-sizing: border-box;
+	padding: 12px;
+}
+
+#custom-dialog.hidden {
+	display: none !important;
+}
+
+#custom-dialog-content {
+	background: #ffffff;
+	border-radius: 8px;
+	border: 2px solid #2563eb;
+	box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+	width: 100%;
+	max-width: 216px; /* Optimized width for KaiOS 240x320 screen size */
+	padding: 10px 12px;
+	box-sizing: border-box;
+	text-align: left;
+	animation: popIn 0.15s ease-out;
+}
+
+@keyframes popIn {
+	from {
+		transform: scale(0.9);
+		opacity: 0;
+	}
+	to {
+		transform: scale(1);
+		opacity: 1;
+	}
+}
+
+#custom-dialog-title {
+	margin: 0;
+	font-size: 0.85rem;
+	font-weight: 700;
+	color: #1e293b;
+	border-bottom: 1.5px solid #2563eb;
+	padding-bottom: 4px;
+	letter-spacing: -0.01em;
+	text-transform: uppercase;
+}
+
+#custom-dialog-msg {
+	margin: 6px 0 0 0;
+	font-size: 0.75rem;
+	color: #475569;
+	line-height: 1.4;
+	word-wrap: break-word;
+	max-height: 140px;
+	overflow-y: auto;
+}
+

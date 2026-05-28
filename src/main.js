@@ -8,6 +8,124 @@ var currentView = 'list';
 var cachedApps = [];
 var currentAppIndex = -1;
 
+var currentAppState = 'INSTALL';
+var currentLocalApp = null;
+
+function showCustomConfirm(title, message) {
+	return new Promise(function(resolve) {
+		var dialog = document.getElementById('custom-dialog');
+		var titleEl = document.getElementById('custom-dialog-title');
+		var msgEl = document.getElementById('custom-dialog-msg');
+		
+		titleEl.textContent = title;
+		msgEl.textContent = message;
+		
+		dialog.classList.remove('hidden');
+		
+		var prevLeft = document.getElementById('softkey-left').textContent;
+		var prevCenter = document.getElementById('softkey-center').textContent;
+		var prevRight = document.getElementById('softkey-right').textContent;
+		var prevView = currentView;
+		
+		currentView = 'dialog';
+		
+		document.getElementById('softkey-left').textContent = 'YES';
+		document.getElementById('softkey-center').textContent = '';
+		document.getElementById('softkey-right').textContent = 'CANCEL';
+		
+		function handleKey(e) {
+			if (currentView !== 'dialog') return;
+			
+			if (e.key === 'SoftLeft' || e.key === 'F1' || e.key === 'ArrowLeft') {
+				e.preventDefault();
+				cleanup(true);
+			} else if (e.key === 'SoftRight' || e.key === 'F2' || e.key === 'Backspace' || e.key === 'Escape' || e.key === 'ArrowRight') {
+				e.preventDefault();
+				cleanup(false);
+			}
+		}
+		
+		function cleanup(result) {
+			window.removeEventListener('keydown', handleKey, true);
+			dialog.classList.add('hidden');
+			currentView = prevView;
+			document.getElementById('softkey-left').textContent = prevLeft;
+			document.getElementById('softkey-center').textContent = prevCenter;
+			document.getElementById('softkey-right').textContent = prevRight;
+			
+			if (currentView === 'list') {
+				updateListSoftkeys();
+			} else if (currentView === 'details') {
+				if (currentAppIndex !== -1 && cachedApps[currentAppIndex]) {
+					updateDetailViewUI(cachedApps[currentAppIndex], currentAppState, currentLocalApp);
+				}
+			}
+			
+			resolve(result);
+		}
+		
+		window.addEventListener('keydown', handleKey, true);
+	});
+}
+
+function showCustomAlert(title, message) {
+	return new Promise(function(resolve) {
+		var dialog = document.getElementById('custom-dialog');
+		var titleEl = document.getElementById('custom-dialog-title');
+		var msgEl = document.getElementById('custom-dialog-msg');
+		
+		titleEl.textContent = title;
+		msgEl.textContent = message;
+		
+		dialog.classList.remove('hidden');
+		
+		var prevLeft = document.getElementById('softkey-left').textContent;
+		var prevCenter = document.getElementById('softkey-center').textContent;
+		var prevRight = document.getElementById('softkey-right').textContent;
+		var prevView = currentView;
+		
+		currentView = 'dialog';
+		
+		document.getElementById('softkey-left').textContent = '';
+		document.getElementById('softkey-center').textContent = 'OK';
+		document.getElementById('softkey-right').textContent = '';
+		
+		function handleKey(e) {
+			if (currentView !== 'dialog') return;
+			
+			if (e.key === 'Enter' || e.key === 'SoftLeft' || e.key === 'F1' || e.key === 'SoftRight' || e.key === 'F2' || e.key === 'Backspace' || e.key === 'Escape') {
+				e.preventDefault();
+				cleanup();
+			}
+		}
+		
+		function cleanup() {
+			window.removeEventListener('keydown', handleKey, true);
+			dialog.classList.add('hidden');
+			currentView = prevView;
+			document.getElementById('softkey-left').textContent = prevLeft;
+			document.getElementById('softkey-center').textContent = prevCenter;
+			document.getElementById('softkey-right').textContent = prevRight;
+			
+			if (currentView === 'list') {
+				updateListSoftkeys();
+			} else if (currentView === 'details') {
+				if (currentAppIndex !== -1 && cachedApps[currentAppIndex]) {
+					updateDetailViewUI(cachedApps[currentAppIndex], currentAppState, currentLocalApp);
+				}
+			}
+			
+			resolve();
+		}
+		
+		window.addEventListener('keydown', handleKey, true);
+	});
+}
+
+function alert(msg) {
+	showCustomAlert('Notification', msg);
+}
+
 function uninstallSilently(app) {
 	return new Promise(function(resolve) {
 		if (!navigator.mozApps || !navigator.mozApps.mgmt) {
@@ -159,22 +277,24 @@ function installFromApp(app, onProgress) {
 							checkAppStatus(app).then(function(status) {
 								if (status.localApp) {
 									// Destructive update warning
-									if (confirm('Direct update of ' + app.name + ' failed (' + errName + '). Perform clean install instead? WARNING: This will wipe your app data/saves.')) {
-										uninstallSilently(app).then(function() {
-											if (onProgress) {
-												onProgress('installing');
-											}
-											var secondRequest = navigator.mozApps.mgmt.import(blob);
-											secondRequest.onsuccess = function() {
-												resolve();
-											};
-											secondRequest.onerror = function() {
-												reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
-											};
-										});
-									} else {
-										reject('Update canceled to protect your app data.');
-									}
+									showCustomConfirm('Clean Install Fallback', 'Direct update of ' + app.name + ' failed (' + errName + '). Perform clean install instead? WARNING: This will wipe your app data/saves.').then(function(confirmed) {
+										if (confirmed) {
+											uninstallSilently(app).then(function() {
+												if (onProgress) {
+													onProgress('installing');
+												}
+												var secondRequest = navigator.mozApps.mgmt.import(blob);
+												secondRequest.onsuccess = function() {
+													resolve();
+												};
+												secondRequest.onerror = function() {
+													reject('Import failed: ' + (this.error ? this.error.name : 'Unknown system error'));
+												};
+											});
+										} else {
+											reject('Update canceled to protect your app data.');
+										}
+									});
 								} else {
 									// No local match detected, but direct import failed. Try clean install as a fallback.
 									uninstallSilently(app).then(function() {
@@ -225,51 +345,25 @@ function installFromApp(app, onProgress) {
 				console.log('Direct install failed: ' + errName + '. Trying fallback clean install.');
 				
 				// Fallback to clean install if allowed
-				if (confirm('Direct update of ' + app.name + ' failed with ' + errName + '. Perform clean install instead? WARNING: This will wipe your app data/saves.')) {
-					uninstallSilently(app).then(function() {
-						var secondRequest = navigator.mozApps.install(manifestUrl);
-						secondRequest.onsuccess = resolve;
-						secondRequest.onerror = function() {
-							reject('Installing failed: ' + (this.error ? this.error.name : 'Unknown error'));
-						};
-					});
-				} else {
-					reject('Update canceled to protect your app data.');
-				}
+				showCustomConfirm('Clean Install Fallback', 'Direct update of ' + app.name + ' failed with ' + errName + '. Perform clean install instead? WARNING: This will wipe your app data/saves.').then(function(confirmed) {
+					if (confirmed) {
+						uninstallSilently(app).then(function() {
+							var secondRequest = navigator.mozApps.install(manifestUrl);
+							secondRequest.onsuccess = resolve;
+							secondRequest.onerror = function() {
+								reject('Installing failed: ' + (this.error ? this.error.name : 'Unknown error'));
+							};
+						});
+					} else {
+						reject('Update canceled to protect your app data.');
+					}
+				});
 			};
 		} else {
 			// Packaged App Flow
-			var manifestUrl = app.manifest_url;
-			if (manifestUrl) {
-				if (manifestUrl.indexOf('raw.githubusercontent.com') !== -1) {
-					manifestUrl = manifestUrl.replace('raw.githubusercontent.com', 'raw.githack.com');
-				} else if (manifestUrl.indexOf('github.com') !== -1 && manifestUrl.indexOf('/raw/') !== -1) {
-					manifestUrl = manifestUrl.replace('github.com', 'raw.githack.com').replace('/raw/', '/');
-				}
-			}
-			
-			if (manifestUrl && typeof navigator.mozApps.installPackage === 'function') {
-				console.log('Installing/Updating packaged app natively via:', manifestUrl);
-				if (onProgress) {
-					onProgress('installing');
-				}
-				
-				var request = navigator.mozApps.installPackage(manifestUrl);
-				request.onsuccess = function() {
-					console.log('Native install/update package succeeded. User data is fully preserved!');
-					resolve();
-				};
-				request.onerror = function() {
-					var errName = this.error ? this.error.name : 'Unknown error';
-					console.log('Native packaged install failed: ' + errName + '. Trying blob import fallback.');
-					
-					// Fall back to downloading zip and importing it via mgmt.import
-					handleBlobPackagedInstall(app, onProgress, resolve, reject);
-				};
-			} else {
-				// No manifest URL or installPackage API is missing, use direct blob download + mgmt.import
-				handleBlobPackagedInstall(app, onProgress, resolve, reject);
-			}
+			// For third-party stores and sideloading, always use blob download + mgmt.import.
+			// This avoids native installPackage manifestURL conflicts and has parity with WebIDE.
+			handleBlobPackagedInstall(app, onProgress, resolve, reject);
 		}
 	});
 }
@@ -369,8 +463,7 @@ function initSpatialNavigation() {
 	updateListSoftkeys();
 }
 
-var currentAppState = 'INSTALL';
-var currentLocalApp = null;
+// Global state declared at top level of scope
 
 function getAppVersion(localApp) {
 	if (!localApp) return "1.0";
@@ -560,72 +653,74 @@ function uninstallApp(app, onSuccess) {
 		return;
 	}
 
-	if (!confirm("Are you sure you want to uninstall " + app.name + "?")) return;
+	showCustomConfirm("Uninstall App", "Are you sure you want to uninstall " + app.name + "?").then(function(confirmed) {
+		if (!confirmed) return;
 
-	var request = navigator.mozApps.mgmt.getAll();
+		var request = navigator.mozApps.mgmt.getAll();
 
-	request.onsuccess = function() {
-		var installedApps = this.result || [];
-		var appToUninstall = null;
+		request.onsuccess = function() {
+			var installedApps = this.result || [];
+			var appToUninstall = null;
 
-		for (var i = 0; i < installedApps.length; i++) {
-			var installedApp = installedApps[i];
-			var installedName = (installedApp.manifest && installedApp.manifest.name) || '';
-			var checkingName = app.name || '';
-			
-			var isMatch = false;
-			if (app.type === 'hosted') {
-				if (installedApp.manifestURL === app.manifest_url) {
+			for (var i = 0; i < installedApps.length; i++) {
+				var installedApp = installedApps[i];
+				var installedName = (installedApp.manifest && installedApp.manifest.name) || '';
+				var checkingName = app.name || '';
+				
+				var isMatch = false;
+				if (app.type === 'hosted') {
+					if (installedApp.manifestURL === app.manifest_url) {
+						isMatch = true;
+					}
+				} else {
+					var targetManifest = "app://" + app.id + "/manifest.webapp";
+					if (installedApp.manifestURL === targetManifest || installedApp.manifestURL === app.manifest_url) {
+						isMatch = true;
+					}
+				}
+				
+				// Fallback to matching by name (case-insensitive & trimmed) for extra robustness
+				if (!isMatch && installedName && checkingName && installedName.toLowerCase().trim() === checkingName.toLowerCase().trim()) {
 					isMatch = true;
 				}
-			} else {
-				var targetManifest = "app://" + app.id + "/manifest.webapp";
-				if (installedApp.manifestURL === targetManifest || installedApp.manifestURL === app.manifest_url) {
-					isMatch = true;
+				
+				if (isMatch) {
+					appToUninstall = installedApp;
+					break;
 				}
 			}
-			
-			// Fallback to matching by name (case-insensitive & trimmed) for extra robustness
-			if (!isMatch && installedName && checkingName && installedName.toLowerCase().trim() === checkingName.toLowerCase().trim()) {
-				isMatch = true;
-			}
-			
-			if (isMatch) {
-				appToUninstall = installedApp;
-				break;
-			}
-		}
 
-		if (appToUninstall) {
-			var uninstReq;
-			// Check if standard B2G mgmt.uninstall API is available, otherwise fall back to DOMApplication.uninstall method
-			if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.uninstall === 'function') {
-				console.log("Using navigator.mozApps.mgmt.uninstall(app) to uninstall...");
-				uninstReq = navigator.mozApps.mgmt.uninstall(appToUninstall);
-			} else if (typeof appToUninstall.uninstall === 'function') {
-				console.log("Using appToUninstall.uninstall() to uninstall...");
-				uninstReq = appToUninstall.uninstall();
+			if (appToUninstall) {
+				var uninstReq;
+				// Check if standard B2G mgmt.uninstall API is available, otherwise fall back to DOMApplication.uninstall method
+				if (navigator.mozApps.mgmt && typeof navigator.mozApps.mgmt.uninstall === 'function') {
+					console.log("Using navigator.mozApps.mgmt.uninstall(app) to uninstall...");
+					uninstReq = navigator.mozApps.mgmt.uninstall(appToUninstall);
+				} else if (typeof appToUninstall.uninstall === 'function') {
+					console.log("Using appToUninstall.uninstall() to uninstall...");
+					uninstReq = appToUninstall.uninstall();
+				} else {
+					alert("Uninstall function not available. If you are on KaiOS 3.0+, use the standard system application launcher.");
+					return;
+				}
+				
+				uninstReq.onsuccess = function() {
+					alert("Application successfully removed.");
+					if (onSuccess) onSuccess();
+				};
+				
+				uninstReq.onerror = function() {
+					alert("Uninstall failed: " + (this.error ? this.error.name : 'Unknown error'));
+				};
 			} else {
-				alert("Uninstall function not available. If you are on KaiOS 3.0+, use the standard system application launcher.");
-				return;
+				alert("This application is not installed on this device.");
 			}
-			
-			uninstReq.onsuccess = function() {
-				alert("Application successfully removed.");
-				if (onSuccess) onSuccess();
-			};
-			
-			uninstReq.onerror = function() {
-				alert("Uninstall failed: " + (this.error ? this.error.name : 'Unknown error'));
-			};
-		} else {
-			alert("This application is not installed on this device.");
-		}
-	};
+		};
 
-	request.onerror = function() {
-		alert("Failed to query system applications registry.");
-	};
+		request.onerror = function() {
+			alert("Failed to query system applications registry.");
+		};
+	});
 }
 
 function showDetails(index) {
