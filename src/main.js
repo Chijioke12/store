@@ -426,7 +426,18 @@ function installFromApp(app, onProgress, forceClean) {
 			// For testing in normal browsers, fallback
 			var url = app.type === 'hosted' ? app.manifest_url : app.download_url;
 			console.log('Would install ' + app.type + ' app from: ' + url);
-			alert('Would install ' + app.type + ' app from: ' + url + '\n(mozApps API not available in this browser)');
+			
+			// Virtual installation persistence
+			var virtualInstalled = JSON.parse(localStorage.getItem('virtual_installed_apps') || '{}');
+			virtualInstalled[app.id] = {
+				id: app.id,
+				name: app.name,
+				version: app.version || "1.0",
+				manifestURL: app.manifest_url || ("app://" + app.id + "/manifest.webapp")
+			};
+			localStorage.setItem('virtual_installed_apps', JSON.stringify(virtualInstalled));
+			
+			alert('Successfully installed ' + app.name + '!\n(Testing fallback for non-KaiOS browsers)');
 			resolve();
 			return;
 		}
@@ -740,6 +751,7 @@ function renderSearchResults(apps) {
 		var item = document.createElement('div');
 		item.className = 'app-card';
 		item.tabIndex = 0;
+		item.dataset.index = index;
 		var typeLabel = (app.type === 'hosted' ? 'Hosted' : 'Packaged');
 		item.innerHTML = '<img src="' + (app.icon || 'icon.svg') + '" class="app-icon"><div class="app-info"><h2 class="app-title">' + app.name + '</h2><div class="app-category-label">' + (app.category || 'App') + '</div><span class="badge badge-' + (app.type || 'packaged') + '">' + typeLabel + '</span></div><div class="free-label">Free</div>';
 		item.onclick = function() {
@@ -747,6 +759,7 @@ function renderSearchResults(apps) {
 			showDetails(index);
 		};
 		container.appendChild(item);
+		updateCardInstallationStatus(item, app);
 	});
 }
 
@@ -802,6 +815,7 @@ function renderAppsFiltered(appsToRender) {
 		});
 		
 		listContainer.appendChild(card);
+		updateCardInstallationStatus(card, app);
 	});
 	
 	// Initialize focus handling
@@ -919,7 +933,18 @@ function compareVersions(v1, v2) {
 function checkAppStatus(app) {
 	return new Promise(function(resolve) {
 		if (!navigator.mozApps || !navigator.mozApps.mgmt) {
-			resolve({ localApp: null, state: 'INSTALL' });
+			var virtualInstalled = JSON.parse(localStorage.getItem('virtual_installed_apps') || '{}');
+			if (virtualInstalled[app.id]) {
+				var localVer = virtualInstalled[app.id].version || "1.0";
+				var serverVer = app.version || "1.0";
+				if (compareVersions(serverVer, localVer) > 0) {
+					resolve({ localApp: virtualInstalled[app.id], state: 'UPDATE' });
+				} else {
+					resolve({ localApp: virtualInstalled[app.id], state: 'OPEN' });
+				}
+			} else {
+				resolve({ localApp: null, state: 'INSTALL' });
+			}
 			return;
 		}
 		
@@ -982,6 +1007,7 @@ function refreshAppStatusMultipleTimes(app) {
 			if (currentView === 'details' && cachedApps[currentAppIndex] && cachedApps[currentAppIndex].id === app.id) {
 				updateDetailViewUI(app, result.state, result.localApp);
 			}
+			updateAllListCardStatuses();
 		});
 	};
 	
@@ -992,6 +1018,34 @@ function refreshAppStatusMultipleTimes(app) {
 	setTimeout(checkAndUpdate, 500);
 	setTimeout(checkAndUpdate, 1500);
 	setTimeout(checkAndUpdate, 3000);
+}
+
+function updateCardInstallationStatus(card, app) {
+	checkAppStatus(app).then(function(status) {
+		var labelEl = card.querySelector('.free-label, .installed-label');
+		if (labelEl) {
+			if (status.state === 'OPEN') {
+				labelEl.className = 'installed-label';
+				labelEl.textContent = 'Installed';
+			} else if (status.state === 'UPDATE') {
+				labelEl.className = 'installed-label';
+				labelEl.textContent = 'Update';
+			} else {
+				labelEl.className = 'free-label';
+				labelEl.textContent = 'Free';
+			}
+		}
+	});
+}
+
+function updateAllListCardStatuses() {
+	var cards = document.querySelectorAll('.app-card');
+	for (var i = 0; i < cards.length; i++) {
+		var idx = parseInt(cards[i].dataset.index, 10);
+		if (idx >= 0 && cachedApps[idx]) {
+			updateCardInstallationStatus(cards[i], cachedApps[idx]);
+		}
+	}
 }
 
 function updateDetailViewUI(app, state, localApp) {
@@ -1016,7 +1070,60 @@ function updateDetailViewUI(app, state, localApp) {
 	document.getElementById('softkey-right').textContent = 'BACK';
 }
 
+function getHostedAppLaunchUrl(app) {
+	var manifestUrl = app.manifest_url;
+	if (!manifestUrl) return "";
+	
+	var baseUrl = manifestUrl.substring(0, manifestUrl.lastIndexOf('/'));
+	return baseUrl + "/";
+}
+
+function showAppPlayer(url) {
+	currentView = 'player';
+	var player = document.getElementById('view-app-player');
+	var iframe = document.getElementById('app-player-iframe');
+	if (player && iframe) {
+		iframe.src = url;
+		player.classList.remove('hidden');
+		iframe.focus();
+		
+		// Hide other views
+		document.getElementById('view-details').classList.add('hidden');
+		document.getElementById('app-content').classList.add('hidden');
+		document.getElementById('softkey-bar').classList.add('hidden');
+	}
+}
+
+function closeAppPlayer() {
+	currentView = 'details';
+	var player = document.getElementById('view-app-player');
+	var iframe = document.getElementById('app-player-iframe');
+	if (player && iframe) {
+		iframe.src = 'about:blank';
+		player.classList.add('hidden');
+		
+		// Unhide details and softkey bar
+		document.getElementById('view-details').classList.remove('hidden');
+		document.getElementById('softkey-bar').classList.remove('hidden');
+		
+		// Refocus detail action button
+		var getBtn = document.getElementById('get-btn');
+		if (getBtn) {
+			getBtn.focus();
+		}
+	}
+}
+
 function openApp(appId, app, localApp) {
+	if (app && app.type === 'hosted') {
+		var launchUrl = getHostedAppLaunchUrl(app);
+		if (launchUrl) {
+			console.log("Opening hosted app inside App Player: " + launchUrl);
+			showAppPlayer(launchUrl);
+			return;
+		}
+	}
+
 	if (localApp && typeof localApp.launch === 'function') {
 		console.log("Launching app via localApp.launch()...");
 		localApp.launch();
@@ -1054,7 +1161,18 @@ function openApp(appId, app, localApp) {
 
 function uninstallApp(app, onSuccess) {
 	if (!navigator.mozApps || !navigator.mozApps.mgmt) {
-		alert("Management API not available.");
+		showCustomConfirm("Uninstall App", "Are you sure you want to uninstall " + app.name + "?").then(function(confirmed) {
+			if (!confirmed) return;
+			var virtualInstalled = JSON.parse(localStorage.getItem('virtual_installed_apps') || '{}');
+			if (virtualInstalled[app.id]) {
+				delete virtualInstalled[app.id];
+				localStorage.setItem('virtual_installed_apps', JSON.stringify(virtualInstalled));
+				alert("Application successfully removed.");
+				if (onSuccess) onSuccess();
+			} else {
+				alert("App is not installed.");
+			}
+		});
 		return;
 	}
 
@@ -1211,9 +1329,23 @@ function hideDetails() {
 	document.getElementById('app-content').classList.remove('hidden');
 	
 	updateListSoftkeys();
+	updateAllListCardStatuses();
+	
 	var cards = document.querySelectorAll('.app-card');
-	if (currentAppIndex !== -1 && cards[currentAppIndex]) {
-		cards[currentAppIndex].focus();
+	var targetCard = null;
+	if (currentAppIndex !== -1) {
+		for (var i = 0; i < cards.length; i++) {
+			if (parseInt(cards[i].dataset.index, 10) === currentAppIndex) {
+				targetCard = cards[i];
+				break;
+			}
+		}
+	}
+	if (!targetCard && cards.length > 0) {
+		targetCard = cards[0];
+	}
+	if (targetCard) {
+		targetCard.focus();
 	}
 }
 
@@ -1226,6 +1358,15 @@ function updateListSoftkeys() {
 }
 
 document.addEventListener('keydown', function(e) {
+	// 0. Player / Application Viewer View Key Event Handling
+	if (currentView === 'player') {
+		if (e.key === 'Backspace' || e.key === 'Escape' || e.key === 'SoftRight' || e.key === 'F2') {
+			e.preventDefault();
+			closeAppPlayer();
+		}
+		return;
+	}
+
 	// 1. Details View Key Event Handling
 	if (currentView === 'details') {
 		if (e.key === 'Backspace' || e.key === 'Escape' || e.key === 'SoftRight' || e.key === 'F2') {
@@ -1299,6 +1440,8 @@ document.addEventListener('keydown', function(e) {
 	}
 
 	// 2. Main List View Key Event Handling
+	if (currentView !== 'list') return;
+
 	var active = document.activeElement;
 	var isCard = active && active.classList.contains('app-card');
 	
@@ -1313,27 +1456,30 @@ document.addEventListener('keydown', function(e) {
 	
 	switch(e.key) {
 		case 'ArrowDown':
+			e.preventDefault();
 			if (currentIndex < cards.length - 1) {
 				cards[currentIndex + 1].focus();
-				e.preventDefault();
 			}
 			break;
 		case 'ArrowUp':
+			e.preventDefault();
 			if (currentIndex > 0) {
 				cards[currentIndex - 1].focus();
-				e.preventDefault();
 			}
 			break;
 		case 'ArrowRight':
-			switchCategory('next');
 			e.preventDefault();
+			switchCategory('next');
 			break;
 		case 'ArrowLeft':
-			switchCategory('prev');
 			e.preventDefault();
+			switchCategory('prev');
 			break;
 		case 'Enter':
-			if (isCard) active.click();
+			if (isCard) {
+				e.preventDefault();
+				active.click();
+			}
 			break;
 	}
 });
