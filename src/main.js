@@ -8,6 +8,9 @@ var currentView = 'list';
 var cachedApps = [];
 var currentAppIndex = -1;
 
+var categories = ["All", "Social", "Games", "Utilities", "News", "Lifestyle", "Entertainment", "Health", "Sports", "Books", "Education", "Shopping"];
+var currentCategory = "All";
+
 var currentAppState = 'INSTALL';
 var currentLocalApp = null;
 
@@ -635,7 +638,140 @@ function showMessagesFor (promise, success) {
 
 function renderApps(apps) {
 	cachedApps = apps;
+	renderCategories();
 	renderAppsFiltered(apps);
+}
+
+function renderCategories() {
+	var categoryContainer = document.getElementById('category-container');
+	if (!categoryContainer) return;
+	categoryContainer.innerHTML = '';
+	
+	categories.forEach(function(cat) {
+		var item = document.createElement('div');
+		item.className = 'category-item';
+		if (cat === currentCategory) {
+			item.classList.add('active');
+		}
+		item.textContent = cat;
+		item.dataset.category = cat;
+		
+		item.addEventListener('click', function() {
+			selectCategory(cat);
+		});
+		
+		categoryContainer.appendChild(item);
+	});
+}
+
+function selectCategory(cat) {
+	if (currentCategory === cat) return;
+	currentCategory = cat;
+	
+	// Update UI
+	var items = document.querySelectorAll('.category-item');
+	for (var i = 0; i < items.length; i++) {
+		items[i].classList.remove('active');
+		if (items[i].dataset.category === currentCategory) {
+			items[i].classList.add('active');
+			items[i].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+		}
+	}
+	
+	// Retrigger filter
+	triggerFilter();
+}
+
+function switchCategory(direction) {
+	var index = categories.indexOf(currentCategory);
+	if (direction === 'next') {
+		index = (index + 1) % categories.length;
+	} else {
+		index = (index - 1 + categories.length) % categories.length;
+	}
+	selectCategory(categories[index]);
+}
+
+function triggerFilter() {
+	var query = "";
+	if (currentView === 'search') {
+		var input = document.getElementById('search-view-input');
+		query = input ? input.value.toLowerCase() : "";
+	}
+	
+	var filteredApps = cachedApps.filter(function(app) {
+		var matchesQuery = true;
+		if (query) {
+			matchesQuery = app.name.toLowerCase().indexOf(query) !== -1 || 
+						   (app.author && app.author.toLowerCase().indexOf(query) !== -1) ||
+						   (app.description && app.description.toLowerCase().indexOf(query) !== -1);
+		}
+		
+		var matchesCategory = currentCategory === "All" || (app.category && app.category.toLowerCase() === currentCategory.toLowerCase());
+		
+		return matchesQuery && matchesCategory;
+	});
+	
+	if (currentView === 'search') {
+		renderSearchResults(filteredApps);
+	} else {
+		renderAppsFiltered(filteredApps);
+	}
+}
+
+function renderSearchResults(apps) {
+	var container = document.getElementById('search-results-list');
+	if (!container) return;
+	container.innerHTML = '';
+	
+	if (apps.length === 0) {
+		var msg = document.createElement('div');
+		msg.className = 'message';
+		msg.textContent = 'No matching apps found.';
+		container.appendChild(msg);
+		return;
+	}
+
+	apps.forEach(function(app) {
+		var index = cachedApps.indexOf(app);
+		var item = document.createElement('div');
+		item.className = 'app-card';
+		item.tabIndex = 0;
+		var typeLabel = (app.type === 'hosted' ? 'Hosted' : 'Packaged');
+		item.innerHTML = '<img src="' + (app.icon || 'icon.svg') + '" class="app-icon"><div class="app-info"><h2 class="app-title">' + app.name + '</h2><div class="app-category-label">' + (app.category || 'App') + '</div><span class="badge badge-' + (app.type || 'packaged') + '">' + typeLabel + '</span></div><div class="free-label">Free</div>';
+		item.onclick = function() {
+			hideSearchView();
+			showDetails(index);
+		};
+		container.appendChild(item);
+	});
+}
+
+function showSearchView() {
+	var prevView = currentView;
+	currentView = 'search';
+	document.getElementById('app-content').classList.add('hidden');
+	document.getElementById('view-search').classList.remove('hidden');
+	
+	var input = document.getElementById('search-view-input');
+	input.value = '';
+	input.focus();
+	
+	document.getElementById('softkey-left').textContent = 'BACK';
+	document.getElementById('softkey-center').textContent = 'SELECT';
+	document.getElementById('softkey-right').textContent = 'CLEAR';
+	
+	triggerFilter();
+}
+
+function hideSearchView() {
+	currentView = 'list';
+	document.getElementById('view-search').classList.add('hidden');
+	document.getElementById('app-content').classList.remove('hidden');
+	updateListSoftkeys();
+	
+	var cards = document.querySelectorAll('.app-card');
+	if (cards.length > 0) cards[0].focus();
 }
 
 function renderAppsFiltered(appsToRender) {
@@ -649,46 +785,18 @@ function renderAppsFiltered(appsToRender) {
 		card.tabIndex = 0;
 		card.dataset.index = index;
 		
-		var header = document.createElement('div');
-		header.className = 'app-header';
-		
-		var icon = document.createElement('img');
-		icon.className = 'app-icon';
-		icon.src = app.icon || 'icon.svg';
-		icon.alt = app.name + ' icon';
-		icon.onerror = function() { this.src = 'icon.svg'; };
-		
-		var info = document.createElement('div');
-		info.className = 'app-info';
-		
-		var title = document.createElement('h2');
-		title.className = 'app-title';
-		title.textContent = app.name;
-		
-		var metaRow = document.createElement('div');
-		metaRow.className = 'app-meta-row';
-		
-		var author = document.createElement('p');
-		author.className = 'app-author';
-		author.textContent = app.author || 'Unknown Author';
-		
-		var typeBadge = document.createElement('span');
-		typeBadge.className = 'badge ' + (app.type === 'hosted' ? 'badge-hosted' : 'badge-packaged');
-		typeBadge.textContent = app.type === 'hosted' ? 'Hosted' : 'Packaged';
-		
-		metaRow.appendChild(author);
-		metaRow.appendChild(typeBadge);
-		
-		info.appendChild(title);
-		info.appendChild(metaRow);
-		header.appendChild(icon);
-		header.appendChild(info);
+		var typeLabel = (app.type === 'hosted' ? 'Hosted' : 'Packaged');
+		card.innerHTML = '<img src="' + (app.icon || 'icon.svg') + '" class="app-icon">' + 
+						 '<div class="app-info">' + 
+						 '<h2 class="app-title">' + app.name + '</h2>' + 
+						 '<div class="app-category-label">' + (app.category || 'App') + '</div>' + 
+						 '<span class="badge badge-' + (app.type || 'packaged') + '">' + typeLabel + '</span>' +
+						 '</div>' + 
+						 '<div class="free-label">Free</div>';
 		
 		card.addEventListener('click', function() {
 			showDetails(index);
 		});
-		
-		card.appendChild(header);
 		
 		listContainer.appendChild(card);
 	});
@@ -699,18 +807,14 @@ function renderAppsFiltered(appsToRender) {
 
 function initSpatialNavigation() {
 	var cards = document.querySelectorAll('.app-card');
-	var searchInput = document.getElementById('search-input');
 	
-	if (cards.length > 0 && document.activeElement !== searchInput) {
+	if (cards.length > 0 && currentView === 'list') {
 		cards[0].focus();
 	}
 	
 	for (var i = 0; i < cards.length; i++) {
 		(function(card) {
 			card.addEventListener('focus', function() {
-				updateListSoftkeys();
-			});
-			card.addEventListener('blur', function() {
 				updateListSoftkeys();
 			});
 		})(cards[i]);
@@ -833,35 +937,20 @@ function updateDetailViewUI(app, state, localApp) {
 	currentAppState = state;
 	currentLocalApp = localApp;
 	
-	var statusIndicator = document.getElementById('details-status-indicator');
-	if (statusIndicator) {
-		statusIndicator.className = 'badge-status'; // Reset base status classes
-		if (state === 'INSTALL') {
-			statusIndicator.textContent = 'Status: Not Installed';
-			statusIndicator.classList.add('badge-status-install');
-			statusIndicator.style.color = '';
-		} else if (state === 'UPDATE') {
-			var localVersion = getAppVersion(localApp);
-			statusIndicator.textContent = 'Status: Update Available (Installed: ' + localVersion + ', Server: ' + (app.version || '1.0') + ')';
-			statusIndicator.classList.add('badge-status-update');
-			statusIndicator.style.color = '';
-		} else if (state === 'OPEN') {
-			var installedVersion = getAppVersion(localApp);
-			statusIndicator.textContent = 'Status: Installed (v' + installedVersion + ')';
-			statusIndicator.classList.add('badge-status-open');
-			statusIndicator.style.color = '';
-		}
-	}
+	var getBtn = document.getElementById('get-btn');
 	
 	if (state === 'INSTALL') {
 		document.getElementById('softkey-left').textContent = '';
 		document.getElementById('softkey-center').textContent = 'INSTALL';
+		if (getBtn) getBtn.textContent = 'INSTALL';
 	} else if (state === 'UPDATE') {
 		document.getElementById('softkey-left').textContent = 'UNINSTALL';
 		document.getElementById('softkey-center').textContent = 'UPDATE';
+		if (getBtn) getBtn.textContent = 'UPDATE';
 	} else if (state === 'OPEN') {
 		document.getElementById('softkey-left').textContent = 'UNINSTALL';
 		document.getElementById('softkey-center').textContent = 'OPEN';
+		if (getBtn) getBtn.textContent = 'OPEN';
 	}
 	document.getElementById('softkey-right').textContent = 'BACK';
 }
@@ -992,85 +1081,76 @@ function showDetails(index) {
 	
 	var hero = document.createElement('div');
 	hero.className = 'details-hero';
+	var typeLabel = (app.type === 'hosted' ? 'Hosted' : 'Packaged');
+	hero.innerHTML = '<img src="' + (app.icon || 'icon.svg') + '" class="app-icon">' + 
+					 '<div class="app-info"><h2 class="app-title">' + app.name + '</h2>' + 
+					 '<div class="app-category-label">' + (app.category || 'App') + '</div>' +
+					 '<span class="badge badge-' + (app.type || 'packaged') + '">' + typeLabel + '</span>' +
+					 '</div>' + 
+					 '<div class="free-label">Free</div>';
 	
-	var icon = document.createElement('img');
-	icon.className = 'app-icon';
-	icon.src = app.icon || 'icon.svg';
-	icon.onerror = function() { this.src = 'icon.svg'; };
+	var actionBar = document.createElement('div');
+	actionBar.className = 'details-action-bar';
+	var getBtn = document.createElement('div');
+	getBtn.id = 'get-btn';
+	getBtn.className = 'details-get-btn';
+	getBtn.tabIndex = 0;
+	getBtn.textContent = 'INSTALL';
+	getBtn.onclick = function() { initiateAppAction(); };
+	actionBar.appendChild(getBtn);
 	
-	var title = document.createElement('h2');
-	title.className = 'app-title';
-	title.textContent = app.name;
-	
-	var author = document.createElement('p');
-	author.className = 'app-author';
-	author.textContent = app.author || 'Unknown Author';
-	
-	var metaContainer = document.createElement('div');
-	metaContainer.className = 'details-meta-container';
-	
-	var typeBadge = document.createElement('span');
-	typeBadge.className = 'badge ' + (app.type === 'hosted' ? 'badge-hosted' : 'badge-packaged');
-	typeBadge.textContent = app.type === 'hosted' ? 'Hosted' : 'Packaged';
-	metaContainer.appendChild(typeBadge);
-	
-	var versionBadge = document.createElement('span');
-	versionBadge.className = 'badge badge-version';
-	versionBadge.textContent = 'v' + (app.version || '1.0');
-	metaContainer.appendChild(versionBadge);
-	
-	hero.appendChild(icon);
-	hero.appendChild(title);
-	hero.appendChild(author);
-	hero.appendChild(metaContainer);
-	
-	var descCard = document.createElement('div');
-	descCard.className = 'details-description-card';
-	
-	var descTitle = document.createElement('div');
-	descTitle.className = 'details-section-title';
-	descTitle.textContent = 'About';
+	var content = document.createElement('div');
+	content.className = 'details-content';
 	
 	var desc = document.createElement('div');
 	desc.className = 'details-description';
-	desc.textContent = app.description || 'No description available.';
+	var shortDesc = app.description ? (app.description.length > 80 ? app.description.substring(0, 80) + '...' : app.description) : 'No description.';
+	desc.textContent = shortDesc;
 	
-	descCard.appendChild(descTitle);
-	descCard.appendChild(desc);
+	if (app.description && app.description.length > 80) {
+		var readMore = document.createElement('span');
+		readMore.className = 'read-more-link';
+		readMore.textContent = 'Read More';
+		readMore.onclick = function() { desc.textContent = app.description; readMore.remove(); };
+		desc.appendChild(readMore);
+	}
+
+	content.appendChild(desc);
+
+	// Information Section
+	var infoSection = document.createElement('div');
+	infoSection.className = 'details-info-section';
+	infoSection.innerHTML = '<div class="info-title">Information</div>' +
+		'<div class="info-row"><span class="info-label">Version</span><span class="info-value">' + (app.version || '1.0.0') + '</span></div>' +
+		'<div class="info-row"><span class="info-label">Size</span><span class="info-value">' + (app.size || 'N/A') + '</span></div>' +
+		'<div class="info-row"><span class="info-label">Developer</span><span class="info-value">' + (app.author || 'Unknown') + '</span></div>';
+	
+	content.appendChild(infoSection);
 	
 	detailsView.appendChild(hero);
-	detailsView.appendChild(descCard);
-	
-	var statusIndicator = document.createElement('div');
-	statusIndicator.id = 'details-status-indicator';
-	statusIndicator.className = 'badge-status badge-status-install';
-	statusIndicator.textContent = 'Checking device status...';
-	detailsView.appendChild(statusIndicator);
+	detailsView.appendChild(actionBar);
+	detailsView.appendChild(content);
+
+	getBtn.focus();
 	
 	document.getElementById('softkey-left').textContent = '';
-	document.getElementById('softkey-center').textContent = '';
+	document.getElementById('softkey-center').textContent = 'SELECT';
 	document.getElementById('softkey-right').textContent = 'BACK';
 	
 	checkAppStatus(app).then(function(result) {
 		if (currentView === 'details' && currentAppIndex === index) {
 			updateDetailViewUI(app, result.state, result.localApp);
-			
-			// Show Data Manager button if app is installed
-			if (result.state !== 'INSTALL') {
-				var dataBtn = document.createElement('div');
-				dataBtn.className = 'app-header';
-				dataBtn.style.marginTop = '20px';
-				dataBtn.style.padding = '10px';
-				dataBtn.style.border = '1px solid #333';
-				dataBtn.style.fontSize = '12px';
-				dataBtn.style.textAlign = 'center';
-				dataBtn.style.background = '#222';
-				dataBtn.innerHTML = '<b>DATA MANAGER</b><br/>Probe & Scan Persistence';
-				dataBtn.onclick = function() { showDataManager(app); };
-				document.getElementById('view-details').appendChild(dataBtn);
-			}
 		}
 	});
+}
+
+function initiateAppAction() {
+	var app = cachedApps[currentAppIndex];
+	if (currentAppState === 'INSTALL' || currentAppState === 'UPDATE') {
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+	} else if (currentAppState === 'OPEN') {
+		openApp(app.id, app, currentLocalApp);
+	}
 }
 
 function hideDetails() {
@@ -1088,18 +1168,9 @@ function hideDetails() {
 function updateListSoftkeys() {
 	if (currentView !== 'list') return;
 	
-	var active = document.activeElement;
-	var isSearch = active && active.id === 'search-input';
-	
 	document.getElementById('softkey-left').textContent = '';
-	
-	if (isSearch) {
-		document.getElementById('softkey-center').textContent = 'SEARCH';
-		document.getElementById('softkey-right').textContent = '';
-	} else {
-		document.getElementById('softkey-center').textContent = 'VIEW';
-		document.getElementById('softkey-right').textContent = 'SEARCH';
-	}
+	document.getElementById('softkey-center').textContent = 'VIEW';
+	document.getElementById('softkey-right').textContent = 'SEARCH';
 }
 
 document.addEventListener('keydown', function(e) {
@@ -1126,21 +1197,20 @@ document.addEventListener('keydown', function(e) {
 		if (e.key === 'Enter') {
 			e.preventDefault();
 			if (currentAppState === 'INSTALL' || currentAppState === 'UPDATE') {
-				var statusIndicator = document.getElementById('details-status-indicator');
+				var getBtn = document.getElementById('get-btn');
 				
 				var proceedWithInstall = function(forceClean) {
-					if (statusIndicator) {
-						statusIndicator.textContent = 'Starting download...';
-						statusIndicator.style.color = '#3498db';
+					if (getBtn) {
+						getBtn.textContent = 'DOWNLOADING...';
 					}
 					document.getElementById('softkey-center').textContent = 'WAIT...';
 					
 					installFromApp(app, function(percent) {
-						if (statusIndicator) {
+						if (getBtn) {
 							if (percent === 'installing') {
-								statusIndicator.textContent = 'Swapping & Installing...';
-							} else {
-								statusIndicator.textContent = 'Downloading: ' + percent + '%';
+								getBtn.textContent = 'INSTALLING...';
+							} else if (typeof percent === 'number') {
+								getBtn.textContent = 'DOWNLOADING ' + percent + '%';
 							}
 						}
 					}, forceClean).then(function() {
@@ -1179,52 +1249,95 @@ document.addEventListener('keydown', function(e) {
 	// 2. Main List View Key Event Handling
 	var active = document.activeElement;
 	var isCard = active && active.classList.contains('app-card');
-	var isSearch = active && active.id === 'search-input';
-	var cards = Array.from(document.querySelectorAll('.app-card'));
-	var currentIndex = cards.indexOf(active);
+	
+	var cards = Array.from(document.querySelectorAll('#app-list .app-card'));
+	var currentIndex = isCard ? cards.indexOf(active) : -1;
 	
 	if (e.key === 'SoftRight' || e.key === 'F2') {
 		e.preventDefault();
-		var searchInput = document.getElementById('search-input');
-		if (searchInput) {
-			searchInput.focus();
-		}
+		showSearchView();
 		return;
 	}
 	
 	switch(e.key) {
 		case 'ArrowDown':
-			if (isSearch && cards.length > 0) {
-				cards[0].focus();
-				e.preventDefault();
-			} else if (isCard && currentIndex < cards.length - 1) {
+			if (currentIndex < cards.length - 1) {
 				cards[currentIndex + 1].focus();
-				cards[currentIndex + 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
-			} else if (!isCard && !isSearch && cards.length > 0) {
-				cards[0].focus();
+				e.preventDefault();
 			}
-			e.preventDefault();
 			break;
 		case 'ArrowUp':
-			if (isCard) {
-				if (currentIndex > 0) {
-					cards[currentIndex - 1].focus();
-					cards[currentIndex - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
-				} else if (currentIndex === 0) {
-					var searchInputStr = document.getElementById('search-input');
-					if (searchInputStr) {
-						searchInputStr.focus();
-					}
-				}
+			if (currentIndex > 0) {
+				cards[currentIndex - 1].focus();
+				e.preventDefault();
 			}
+			break;
+		case 'ArrowRight':
+			switchCategory('next');
+			e.preventDefault();
+			break;
+		case 'ArrowLeft':
+			switchCategory('prev');
 			e.preventDefault();
 			break;
 		case 'Enter':
-			if (isCard) {
-				active.click();
-			}
+			if (isCard) active.click();
 			break;
 	}
+});
+
+// 3. Search View Input Handling
+window.addEventListener('DOMContentLoaded', function() {
+	var searchInput = document.getElementById('search-view-input');
+	if (searchInput) {
+		searchInput.addEventListener('input', function() {
+			triggerFilter();
+		});
+		
+		searchInput.addEventListener('keydown', function(e) {
+			if (currentView !== 'search') return;
+			
+			if (e.key === 'ArrowDown') {
+				var results = document.querySelectorAll('#search-results-list .app-card');
+				if (results.length > 0) {
+					results[0].focus();
+					e.preventDefault();
+				}
+			} else if (e.key === 'SoftLeft' || e.key === 'F1' || e.key === 'Backspace') {
+				if (e.key === 'Backspace' && searchInput.value.length > 0) return;
+				e.preventDefault();
+				hideSearchView();
+			} else if (e.key === 'SoftRight' || e.key === 'F2') {
+				e.preventDefault();
+				searchInput.value = '';
+				triggerFilter();
+			}
+		});
+	}
+	
+	// Delegate ArrowUp from search results back to input
+	document.addEventListener('keydown', function(e) {
+		if (currentView !== 'search') return;
+		var active = document.activeElement;
+		if (active && active.parentElement && active.parentElement.id === 'search-results-list') {
+			var results = Array.from(document.querySelectorAll('#search-results-list .app-card'));
+			var idx = results.indexOf(active);
+			
+			if (e.key === 'ArrowUp' && idx === 0) {
+				document.getElementById('search-view-input').focus();
+				e.preventDefault();
+			} else if (e.key === 'ArrowUp' && idx > 0) {
+				results[idx - 1].focus();
+				e.preventDefault();
+			} else if (e.key === 'ArrowDown' && idx < results.length - 1) {
+				results[idx + 1].focus();
+				e.preventDefault();
+			} else if (e.key === 'SoftLeft' || e.key === 'F1' || e.key === 'Backspace') {
+				e.preventDefault();
+				hideSearchView();
+			}
+		}
+	});
 });
 
 function loadRegistry() {
@@ -1276,26 +1389,6 @@ function initApp() {
 				refreshAppStatusMultipleTimes(cachedApps[currentAppIndex]);
 			}
 		};
-	}
-
-	var searchInput = document.getElementById('search-input');
-	if (searchInput) {
-		searchInput.addEventListener('input', function() {
-			var query = this.value.toLowerCase();
-			var filteredApps = cachedApps.filter(function(app) {
-				return app.name.toLowerCase().indexOf(query) !== -1 || 
-					   (app.author && app.author.toLowerCase().indexOf(query) !== -1) ||
-					   (app.description && app.description.toLowerCase().indexOf(query) !== -1);
-			});
-			renderAppsFiltered(filteredApps);
-		});
-
-		searchInput.addEventListener('focus', function() {
-			updateListSoftkeys();
-		});
-		searchInput.addEventListener('blur', function() {
-			updateListSoftkeys();
-		});
 	}
 	
 	// Initial softkey render

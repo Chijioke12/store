@@ -13,13 +13,20 @@
 	<header>Open KaiStore</header>
 	
 	<main id="app-content">
-		<div id="search-container">
-			<input type="text" id="search-input" placeholder="Search apps...">
-		</div>
+		<div id="category-container"></div>
 		<div id="loading" class="message">Loading apps...</div>
 		<div id="error" class="message hidden"></div>
 		<div id="app-list"></div>
 	</main>
+
+	<!-- Search View -->
+	<div id="view-search" class="view hidden">
+		<div class="app-header">Search Apps</div>
+		<div style="padding: 10px;">
+			<input type="text" id="search-view-input" class="search-input-field" placeholder="Type here..." focusable>
+		</div>
+		<div id="search-results-list"></div>
+	</div>
 
 	<main id="view-details" class="hidden"></main>
 
