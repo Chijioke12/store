@@ -670,11 +670,14 @@ function selectCategory(cat) {
 	
 	// Update UI
 	var items = document.querySelectorAll('.category-item');
+	var container = document.getElementById('category-container');
 	for (var i = 0; i < items.length; i++) {
 		items[i].classList.remove('active');
 		if (items[i].dataset.category === currentCategory) {
 			items[i].classList.add('active');
-			items[i].scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+			if (container) {
+				scrollToCenterHorizontal(items[i], container);
+			}
 		}
 	}
 	
@@ -821,6 +824,64 @@ function initSpatialNavigation() {
 	}
 	updateListSoftkeys();
 }
+
+function scrollToCenter(element, container) {
+	// 1. Get the top position of the element relative to the container
+	var elementTop = element.offsetTop;
+	
+	// 2. Get the dimensions
+	var elementHeight = element.offsetHeight;
+	var containerHeight = container.clientHeight;
+
+	// 3. The Math:
+	// elementTop: puts the item at the very top of the container.
+	// - (containerHeight / 2): moves the scroll point up by half the container height (centering the view).
+	// + (elementHeight / 2): adjusts for the item's own height so its center aligns with the container's center.
+	var targetScrollPos = elementTop - (containerHeight / 2) + (elementHeight / 2);
+
+	// 4. Apply the scroll position to the container
+	container.scrollTop = targetScrollPos;
+}
+
+function scrollToCenterHorizontal(element, container) {
+	// 1. Get the left position of the element relative to the container
+	var elementLeft = element.offsetLeft;
+	
+	// 2. Get the dimensions
+	var elementWidth = element.offsetWidth;
+	var containerWidth = container.clientWidth;
+
+	// 3. The Math:
+	// elementLeft: puts the item at the very left of the container.
+	// - (containerWidth / 2): moves the scroll point left by half the container width (centering the view).
+	// + (elementWidth / 2): adjusts for the item's own width so its center aligns with the container's center.
+	var targetScrollPos = elementLeft - (containerWidth / 2) + (elementWidth / 2);
+
+	// 4. Apply the scroll position to the container
+	container.scrollLeft = targetScrollPos;
+}
+
+// Global capturing focus listener to center focused elements
+document.addEventListener('focus', function(e) {
+	if (e.target && e.target.classList) {
+		if (e.target.classList.contains('app-card')) {
+			var container = null;
+			if (currentView === 'list') {
+				container = document.getElementById('app-content');
+			} else if (currentView === 'search') {
+				container = document.getElementById('view-search');
+			}
+			if (container) {
+				scrollToCenter(e.target, container);
+			}
+		} else if (e.target.classList.contains('category-item')) {
+			var container = document.getElementById('category-container');
+			if (container) {
+				scrollToCenterHorizontal(e.target, container);
+			}
+		}
+	}
+}, true);
 
 // Global state declared at top level of scope
 
@@ -1104,16 +1165,7 @@ function showDetails(index) {
 	
 	var desc = document.createElement('div');
 	desc.className = 'details-description';
-	var shortDesc = app.description ? (app.description.length > 80 ? app.description.substring(0, 80) + '...' : app.description) : 'No description.';
-	desc.textContent = shortDesc;
-	
-	if (app.description && app.description.length > 80) {
-		var readMore = document.createElement('span');
-		readMore.className = 'read-more-link';
-		readMore.textContent = 'Read More';
-		readMore.onclick = function() { desc.textContent = app.description; readMore.remove(); };
-		desc.appendChild(readMore);
-	}
+	desc.textContent = app.description || 'No description.';
 
 	content.appendChild(desc);
 

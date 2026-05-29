@@ -72,6 +72,9 @@ header {
 }
 
 #category-container {
+	position: sticky;
+	top: 0;
+	z-index: 10;
 	display: flex;
 	overflow-x: auto;
 	white-space: nowrap;
@@ -331,16 +334,6 @@ header {
 	font-size: 0.75rem;
 	color: #1e293b;
 	font-weight: 500;
-}
-
-.read-more-link {
-	background: #4b49ac;
-	color: #fff;
-	padding: 2px 8px;
-	border-radius: 10px;
-	font-size: 0.75rem;
-	display: inline-block;
-	margin-left: 4px;
 }
 
 #softkey-bar {
